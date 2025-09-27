@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
+
 class BeamModel:
     """Finite-element (Euler–Bernoulli) continuous beam model.
     All internal forces/loads in N or N/m; user-facing outputs in kN or kNm.
@@ -44,38 +45,48 @@ class BeamModel:
         return tup
 
     def add_concrete_pressure_hydro(self, pressure_kNpm2, influence_m, x_start, x_end):
+        """ Create a two-part UDL for concrete (hydrostatic) pressure:
+        • flat from x_start to (x_end − Lh) at w_max
+        • triangular from (x_end − Lh) to x_end tapering w_max → 0
+        """
         L = self.L
         x_start = max(0.0, min(float(x_start), L))
         x_end = max(0.0, min(float(x_end), L))
         if x_end <= x_start:
             return
-        Lh = float(pressure_kNpm2) / 25.0
-        wmax_kNpm = float(pressure_kNpm2) * float(influence_m)  # kN/m
 
-        tri_a_theory = x_end - Lh
-        tri_a = max(x_start, tri_a_theory)
-        tri_b = x_end
-        flat_a = x_start
-        flat_b = min(x_end, tri_a_theory)
+        # hydrostatic head length
+        Lh = float(pressure_kNpm2) / 25.0  # 25 kN/m³ = unit weight of concrete
 
-        if flat_b - flat_a > 1e-12:
-            t = self.add_udl(flat_a, flat_b, wmax_kNpm * 1e3, wmax_kNpm * 1e3)
+        w_max_kNpm = float(pressure_kNpm2) * float(influence_m)  # kN/m line load
+
+        flat_end = max(x_start, x_end - Lh)  # end of the flat portion
+
+        # --- 1️⃣ flat part: constant w_max
+        if flat_end - x_start > 1e-12:
+            t = self.add_udl(
+                x_start,
+                flat_end,
+                w_max_kNpm * 1e3,  # to N/m
+                w_max_kNpm * 1e3
+            )
             self._hydro_udl_tuples.add(t)
 
-        L_tri = max(0.0, tri_b - tri_a)
-        if L_tri > 1e-12:
-            factor = min(1.0, max(0.0, (x_end - tri_a) / max(Lh, 1e-9)))
-            w1_tri_kNpm = wmax_kNpm * factor
-            t = self.add_udl(tri_a, tri_b, w1_tri_kNpm * 1e3, 0.0)
+        # --- 2️⃣ triangular tail: w_max → 0
+        if x_end - flat_end > 1e-12:
+            t = self.add_udl(flat_end, x_end, w_max_kNpm * 1e3, 0.0)
             self._hydro_udl_tuples.add(t)
-        else:
-            w1_tri_kNpm = 0.0
 
+        # store for plotting / info
         self._hydro_parts.append({
-            "start": x_start, "end": x_end, "Lh": Lh, "wmax_kNpm": wmax_kNpm,
-            "flat": (flat_a, flat_b), "tri": (tri_a, tri_b, w1_tri_kNpm)
+            "start": x_start,
+            "end": x_end,
+            "Lh": Lh,
+            "wmax_kNpm": w_max_kNpm,
+            "flat": (x_start, flat_end),
+            "tri": (flat_end, x_end, w_max_kNpm)
         })
-        self.extra_nodes.update([x_start, x_end, tri_a, flat_b])
+        self.extra_nodes.update([x_start, x_end, flat_end])
 
     def add_spring_support(self, x, k):
         self.spring_supports.append((float(x), float(k)))
@@ -94,7 +105,10 @@ class BeamModel:
 
     @staticmethod
     def _consistent_load_vec_udl(w, L):
-        return np.array([w * L / 2, w * L ** 2 / 12, w * L / 2, -w * L ** 2 / 12], dtype=float)
+        return np.array(
+            [w * L / 2, w * L ** 2 / 12, w * L / 2, -w * L ** 2 / 12],
+            dtype=float
+        )
 
     def solve(self, max_elem_len=0.25):
         x_nodes = self._build_mesh(max_elem_len=max_elem_len)
@@ -108,20 +122,33 @@ class BeamModel:
             Le = xb - xa
 
             ke = (self.E * self.I / Le ** 3) * np.array(
-                [[12, 6 * Le, -12, 6 * Le],
-                 [6 * Le, 4 * Le ** 2, -6 * Le, 2 * Le ** 2],
-                 [-12, -6 * Le, 12, -6 * Le],
-                 [6 * Le, 2 * Le ** 2, -6 * Le, 4 * Le ** 2]],
-                float
+                [
+                    [12, 6 * Le, -12, 6 * Le],
+                    [6 * Le, 4 * Le ** 2, -6 * Le, 2 * Le ** 2],
+                    [-12, -6 * Le, 12, -6 * Le],
+                    [6 * Le, 2 * Le ** 2, -6 * Le, 4 * Le ** 2],
+                ],
+                float,
             )
             idx = [2 * e, 2 * e + 1, 2 * e + 2, 2 * e + 3]
             K[np.ix_(idx, idx)] += ke
 
+            # UPDATED UDL LOOP (per your instructions)
             for (a, b, w1, w2) in self.udls:
-                overlap = max(0.0, min(xb, b) - max(xa, a))
-                if overlap > 1e-9:
-                    w_avg = 0.5 * (w1 + w2)
-                    F[idx] += self._consistent_load_vec_udl(w_avg, Le)
+                ov_a = max(xa, a)
+                ov_b = min(xb, b)
+                overlap = max(0.0, ov_b - ov_a)
+                if overlap > 1e-12:
+                    if b - a > 1e-12:
+                        t1 = (ov_a - a) / (b - a)
+                        t2 = (ov_b - a) / (b - a)
+                        w_a = w1 + (w2 - w1) * max(0.0, min(1.0, t1))
+                        w_b = w1 + (w2 - w1) * max(0.0, min(1.0, t2))
+                        w_avg_local = 0.5 * (w_a + w_b)
+                    else:
+                        w_avg_local = 0.5 * (w1 + w2)
+                    frac = overlap / Le
+                    F[idx] += frac * self._consistent_load_vec_udl(w_avg_local, Le)
 
         for (xp, P) in self.point_loads:
             j = int(np.argmin(np.abs(x_nodes - xp)))
@@ -139,7 +166,6 @@ class BeamModel:
                 bc.add(2 * j + 1)
         bc = sorted(bc)
         free = np.setdiff1d(np.arange(dof), bc)
-
         if free.size == dof:
             raise ValueError("Model is under-restrained: add at least one support/spring.")
 
@@ -149,16 +175,11 @@ class BeamModel:
         reactions = [(x_nodes[b // 2], R[b] / 1e3) for b in bc]  # kN
 
         v = U[0::2]; th = U[1::2]
-
-        xe = []
-        Me = []
-        Ve = []
-        we = []
+        xe = []; Me = []; Ve = []; we = []
         for e in range(n - 1):
             xa, xb = x_nodes[e], x_nodes[e + 1]
             Le = xb - xa
             v1, t1, v2, t2 = v[e], th[e], v[e + 1], th[e + 1]
-
             s = np.linspace(0, 1, 20)
             xloc = xa + s * Le
 
@@ -184,6 +205,7 @@ class BeamModel:
             we.append(wvals)
 
         x_plot = np.concatenate(xe)
+
         return {
             "x_nodes": x_nodes,
             "deflection_mm": v * 1e3,
@@ -193,11 +215,10 @@ class BeamModel:
             "w_mm": np.concatenate(we) * 1e3,
             "reactions_kN": reactions
         }
-    
+
     def plot_FBD(self, results):
         fig, ax = plt.subplots(figsize=(10, 1.5))
         fig.suptitle("FREE BODY DIAGRAM", fontsize=11, fontweight='bold', y=1.02)
-
         L = self.L
         tri_base_y = -0.25
         dim_line_y = -0.55
@@ -238,12 +259,8 @@ class BeamModel:
 
         def draw_fixed(x):
             rect = plt.Rectangle(
-                (x - 0.02 * L, tri_base_y),
-                0.04 * L,
-                abs(tri_base_y),
-                fill=True,
-                alpha=0.4,
-                edgecolor="black",
+                (x - 0.02 * L, tri_base_y), 0.04 * L, abs(tri_base_y),
+                fill=True, alpha=0.4, edgecolor="black",
             )
             ax.add_patch(rect)
             return tri_base_y
@@ -326,7 +343,10 @@ class BeamModel:
                     xytext=(x_i, y_ref + slope * (x_i - a) / max(b - a, 1e-9)),
                     arrowprops=dict(arrowstyle="->", color="blue", linewidth=1.5),
                 )
-            ax.text((a + b) / 2, 0.48, f"{w1 / 1e3:.2f}→{w2 / 1e3:.2f} kN/m", ha="center", va="bottom", fontsize=9, color="blue")
+            ax.text(
+                (a + b) / 2, 0.48, f"{w1 / 1e3:.2f}→{w2 / 1e3:.2f} kN/m",
+                ha="center", va="bottom", fontsize=9, color="blue"
+            )
 
         # hydro custom
         for hp in self._hydro_parts:
@@ -335,12 +355,16 @@ class BeamModel:
             flat_a, flat_b = hp["flat"]
             tri_a, tri_b, _w1_tri = hp["tri"]
             wmax_kNpm = hp["wmax_kNpm"]
+
             y_top = 0.35
             y_tail = 0.05
+
             if flat_b - flat_a > 1e-12:
                 ax.hlines(y_top, flat_a, flat_b, colors="blue", linewidth=1.8)
+
             if tri_b - tri_a > 1e-12:
                 ax.plot([tri_a, tri_b], [y_top, y_tail], color="blue", linewidth=1.8)
+
             xs_ = np.linspace(start, end, 10)
             L_tri = max(1e-9, tri_b - tri_a)
             for x_i in xs_:
@@ -355,17 +379,24 @@ class BeamModel:
                     xytext=(x_i, y_head),
                     arrowprops=dict(arrowstyle="->", color="blue", linewidth=1.5),
                 )
-            ax.text(0.5 * (start + end), 0.52, f"{wmax_kNpm:.2f} kN/m", ha="center", va="bottom", fontsize=9, color="blue")
+
+            ax.text(
+                0.5 * (start + end), 0.52, f"{wmax_kNpm:.2f} kN/m",
+                ha="center", va="bottom", fontsize=9, color="blue"
+            )
 
         # point loads
         for (xp, P) in self.point_loads:
             if P >= 0:
-                ax.annotate("", xy=(xp, 0.06), xytext=(xp, 0.55), arrowprops=dict(arrowstyle="->", color="red", linewidth=2))
+                ax.annotate("", xy=(xp, 0.06), xytext=(xp, 0.55),
+                            arrowprops=dict(arrowstyle="->", color="red", linewidth=2))
                 text_y = 0.58
             else:
-                ax.annotate("", xy=(xp, 0.55), xytext=(xp, 0.06), arrowprops=dict(arrowstyle="->", color="red", linewidth=2))
+                ax.annotate("", xy=(xp, 0.55), xytext=(xp, 0.06),
+                            arrowprops=dict(arrowstyle="->", color="red", linewidth=2))
                 text_y = 0.03
-            ax.text(xp, text_y, f"{abs(P) / 1e3:.2f} kN", ha="center", va="bottom", fontsize=9, color="red")
+            ax.text(xp, text_y, f"{abs(P) / 1e3:.2f} kN",
+                    ha="center", va="bottom", fontsize=9, color="red")
 
         ax.set_xlim(-0.02 * L, 1.02 * L)
         ax.set_ylim(-0.75, 0.7)
@@ -391,6 +422,7 @@ class BeamModel:
 
         for xt in np.arange(0, self.L + 0.5, 0.5):
             ax.axvline(xt, color="grey", linestyle=":", linewidth=0.5)
+
         ymin, ymax = ax.get_ylim()
         for yt in np.arange(np.floor(ymin * 2) / 2, np.ceil(ymax * 2) / 2 + 0.5, 0.5):
             ax.axhline(yt, color="grey", linestyle=":", linewidth=0.5)
@@ -419,6 +451,7 @@ class BeamModel:
 
         for xt in np.arange(0, self.L + 0.5, 0.5):
             ax.axvline(xt, color="grey", linestyle=":", linewidth=0.5)
+
         ymin, ymax = ax.get_ylim()
         for yt in np.arange(np.floor(ymin * 2) / 2, np.ceil(ymax * 2) / 2 + 0.5, 0.5):
             ax.axhline(yt, color="grey", linestyle=":", linewidth=0.5)
@@ -434,7 +467,6 @@ class BeamModel:
         x, y = results["x"], results["w_mm"]
         ax.plot(x, y, color="blue", linewidth=2)
         ax.fill_between(x, 0, y, alpha=0.2, color="blue")
-
         ax.set_ylabel("Deflection (mm)")
         ax.set_xlabel("x (m)")
         self._annotate_extrema(ax, x, y, "mm")

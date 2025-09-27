@@ -319,22 +319,42 @@ with tab1:
         st.markdown('<div class="print-hide">', unsafe_allow_html=True)
         st.title("Hut Beam Analysis")
         st.subheader("Member Section (from sections.csv)")
+
+        # ─────────────── REPLACED BLOCK STARTS HERE ───────────────
         section_list = sections_df["SectionName"].dropna().tolist() if not sections_df.empty else []
         selected_section_default = saved_inputs.get("SectionName", "--Manual--")
         if selected_section_default not in (["--Manual--"] + section_list):
             selected_section_default = "--Manual--"
+
+        # ➊ Dropdown to either choose or go manual
         selected_section = st.selectbox(
             "Select a Section",
             ["--Manual--"] + section_list,
             index=(["--Manual--"] + section_list).index(selected_section_default)
         )
+
+        # ➋ If manual, show a text box so the user can type a custom name
+        if selected_section == "--Manual--":
+            manual_name = st.text_input("Type custom section name",
+                                        value=saved_inputs.get("ManualSectionName",""))
+            # add ** to indicate user typed it
+            if manual_name.strip():
+                selected_section = manual_name.strip() + "**"
+        # ─────────────── REPLACED BLOCK ENDS HERE ───────────────
+
         if selected_section != "--Manual--" and not sections_df.empty:
-            r = sections_df.loc[sections_df["SectionName"] == selected_section].iloc[0]
-            default_E = float(r["E_Nmm2"]) if pd.notna(r["E_Nmm2"]) else 210000.0
-            default_I = float(r["I_cm4"]) if pd.notna(r["I_cm4"]) else 1000.0
-            perm_shear_default = float(r["PermissibleShear_kN"]) if pd.notna(r["PermissibleShear_kN"]) else 50.0
-            perm_moment_default = float(r["PermissibleMoment_kNm"]) if pd.notna(r["PermissibleMoment_kNm"]) else 20.0
-            grade_default = str(r["Grade"]) if pd.notna(r["Grade"]) else "Custom"
+            r = sections_df.loc[sections_df["SectionName"] == selected_section].iloc[0] if selected_section in sections_df["SectionName"].values else None
+            if r is not None:
+                default_E = float(r["E_Nmm2"]) if pd.notna(r["E_Nmm2"]) else 210000.0
+                default_I = float(r["I_cm4"]) if pd.notna(r["I_cm4"]) else 1000.0
+                perm_shear_default = float(r["PermissibleShear_kN"]) if pd.notna(r["PermissibleShear_kN"]) else 50.0
+                perm_moment_default = float(r["PermissibleMoment_kNm"]) if pd.notna(r["PermissibleMoment_kNm"]) else 20.0
+                grade_default = str(r["Grade"]) if pd.notna(r["Grade"]) else "Custom"
+            else:
+                # Selected was a manual custom name with **; fall back to defaults
+                default_E = 210000.0; default_I = 1000.0
+                perm_shear_default = 50.0; perm_moment_default = 20.0
+                grade_default = "Custom"
         else:
             default_E = 210000.0; default_I = 1000.0
             perm_shear_default = 50.0; perm_moment_default = 20.0
@@ -474,7 +494,7 @@ with tab1:
                 )
 
             try:
-                res = beam.solve(max_elem_len=0.002)
+                res = beam.solve(max_elem_len=0.001)
             except ValueError as e:
                 st.error(str(e))
                 res = None
