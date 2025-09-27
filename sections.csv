@@ -1,0 +1,3 @@
+SectionName,E_Nmm2,I_cm4,PermissibleShear_kN,PermissibleMoment_kNm,Grade
+ISMC100,210000,102.4,60,20,Fe250
+ISMB150,210000,2200,90,40,Fe250
