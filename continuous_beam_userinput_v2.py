@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+from matplotlib.ticker import MaxNLocator, MultipleLocator
 
 
 class BeamModel:
@@ -19,9 +20,7 @@ class BeamModel:
         self.spring_supports = []
         self.perm_shear = perm_shear  # kN
         self.perm_moment = perm_moment  # kNm
-        self.grade = grade
-
-        # Hydro (concrete pressure) visual parts
+        self.grade = grade  # Hydro (concrete pressure) visual parts
         self._hydro_parts = []
         self._hydro_udl_tuples = set()
 
@@ -45,39 +44,27 @@ class BeamModel:
         return tup
 
     def add_concrete_pressure_hydro(self, pressure_kNpm2, influence_m, x_start, x_end):
-        """ Create a two-part UDL for concrete (hydrostatic) pressure:
-        • flat from x_start to (x_end − Lh) at w_max
-        • triangular from (x_end − Lh) to x_end tapering w_max → 0
-        """
+        """Create a two-part UDL for concrete (hydrostatic) pressure."""
         L = self.L
         x_start = max(0.0, min(float(x_start), L))
         x_end = max(0.0, min(float(x_end), L))
         if x_end <= x_start:
             return
-
-        # hydrostatic head length
         Lh = float(pressure_kNpm2) / 25.0  # 25 kN/m³ = unit weight of concrete
-
         w_max_kNpm = float(pressure_kNpm2) * float(influence_m)  # kN/m line load
-
-        flat_end = max(x_start, x_end - Lh)  # end of the flat portion
-
-        # --- 1️⃣ flat part: constant w_max
+        flat_end = max(x_start, x_end - Lh)
+        # 1️⃣ flat part
         if flat_end - x_start > 1e-12:
             t = self.add_udl(
-                x_start,
-                flat_end,
+                x_start, flat_end,
                 w_max_kNpm * 1e3,  # to N/m
                 w_max_kNpm * 1e3
             )
             self._hydro_udl_tuples.add(t)
-
-        # --- 2️⃣ triangular tail: w_max → 0
+        # 2️⃣ triangular tail
         if x_end - flat_end > 1e-12:
             t = self.add_udl(flat_end, x_end, w_max_kNpm * 1e3, 0.0)
             self._hydro_udl_tuples.add(t)
-
-        # store for plotting / info
         self._hydro_parts.append({
             "start": x_start,
             "end": x_end,
@@ -120,20 +107,18 @@ class BeamModel:
         for e in range(n - 1):
             xa, xb = x_nodes[e], x_nodes[e + 1]
             Le = xb - xa
-
             ke = (self.E * self.I / Le ** 3) * np.array(
                 [
                     [12, 6 * Le, -12, 6 * Le],
                     [6 * Le, 4 * Le ** 2, -6 * Le, 2 * Le ** 2],
                     [-12, -6 * Le, 12, -6 * Le],
                     [6 * Le, 2 * Le ** 2, -6 * Le, 4 * Le ** 2],
-                ],
-                float,
+                ], float,
             )
             idx = [2 * e, 2 * e + 1, 2 * e + 2, 2 * e + 3]
             K[np.ix_(idx, idx)] += ke
 
-            # UPDATED UDL LOOP (per your instructions)
+            # UDL contributions
             for (a, b, w1, w2) in self.udls:
                 ov_a = max(xa, a)
                 ov_b = min(xb, b)
@@ -174,38 +159,34 @@ class BeamModel:
         R = K @ U - F
         reactions = [(x_nodes[b // 2], R[b] / 1e3) for b in bc]  # kN
 
-        v = U[0::2]; th = U[1::2]
-        xe = []; Me = []; Ve = []; we = []
+        v = U[0::2]
+        th = U[1::2]
+
+        xe, Me, Ve, we = [], [], [], []
         for e in range(n - 1):
             xa, xb = x_nodes[e], x_nodes[e + 1]
             Le = xb - xa
             v1, t1, v2, t2 = v[e], th[e], v[e + 1], th[e + 1]
             s = np.linspace(0, 1, 20)
             xloc = xa + s * Le
-
             N1 = 1 - 3 * s ** 2 + 2 * s ** 3
             N2 = Le * (s - 2 * s ** 2 + s ** 3)
             N3 = 3 * s ** 2 - 2 * s ** 3
             N4 = Le * (-s ** 2 + s ** 3)
-
             wvals = N1 * v1 + N2 * t1 + N3 * v2 + N4 * t2
-
             d2N1 = (-6 + 12 * s) / Le ** 2
             d2N2 = (-4 + 6 * s) / Le
             d2N3 = (6 - 12 * s) / Le ** 2
             d2N4 = (-2 + 6 * s) / Le
             curv = d2N1 * v1 + d2N2 * t1 + d2N3 * v2 + d2N4 * t2
-
             M = self.E * self.I * curv
             V = -np.gradient(M, xloc, edge_order=2)
-
             xe.append(xloc)
             Me.append(M)
             Ve.append(V)
             we.append(wvals)
 
         x_plot = np.concatenate(xe)
-
         return {
             "x_nodes": x_nodes,
             "deflection_mm": v * 1e3,
@@ -217,12 +198,16 @@ class BeamModel:
         }
 
     def plot_FBD(self, results):
-        fig, ax = plt.subplots(figsize=(10, 1.5))
+        fig, ax = plt.subplots(figsize=(10, 3))
+
+        ax.xaxis.get_major_locator().set_params(nbins=1000)
+        ax.yaxis.get_major_locator().set_params(nbins=1000)
         fig.suptitle("FREE BODY DIAGRAM", fontsize=11, fontweight='bold', y=1.02)
+
         L = self.L
-        tri_base_y = -0.25
+        tri_base_y = -0.2
         dim_line_y = -0.55
-        tri_half_w = 0.05 * L  # half width of support triangle
+        tri_half_w = 0.02 * L
 
         for s in ax.spines.values():
             s.set_visible(False)
@@ -289,14 +274,8 @@ class BeamModel:
                 bottom_y = support_bottom.get(float(x_supp), tri_base_y)
                 ax.plot([x_supp, x_supp], [bottom_y - 0.1, bottom_y - 0.5], color="black", linewidth=1.5)
                 ax.text(
-                    x_supp,
-                    bottom_y - 0.7,
-                    f"{abs(R):.0f} kN",
-                    color="red",
-                    fontsize=16,
-                    ha="center",
-                    va="top",
-                    fontweight="bold",
+                    x_supp, bottom_y - 0.7, f"{abs(R):.0f} kN",
+                    color="red", fontsize=16, ha="center", va="top", fontweight="bold",
                 )
 
         xs = sorted(x for x, _ in self.supports)
@@ -313,9 +292,7 @@ class BeamModel:
             b = xs_full[i + 1]
             xm = 0.5 * (a + b)
             ax.annotate(
-                "",
-                xy=(b, dim_line_y),
-                xytext=(a, dim_line_y),
+                "", xy=(b, dim_line_y), xytext=(a, dim_line_y),
                 arrowprops=dict(arrowstyle="<->", color="black", linewidth=1.2),
             )
             ax.vlines(a, dim_line_y, bottom_at(a), colors="black", linewidth=1.0)
@@ -323,9 +300,10 @@ class BeamModel:
             ax.text(xm, dim_line_y - 0.045, f"{(b - a):.2f} m", ha="center", va="top", fontsize=9)
 
         ax.set_xlim(-0.05 * L, 1.05 * L)
-        ax.set_ylim(-0.9, 0.4)
+        ax.set_ylim(-0.9, 0.65)
 
-        # generic UDLs (skip hydro ones)
+        # --- Restored drawing blocks ---
+        # Generic UDLs (blue arrows and label)
         for tup in self.udls:
             if tup in self._hydro_udl_tuples:
                 continue
@@ -348,20 +326,18 @@ class BeamModel:
                 ha="center", va="bottom", fontsize=9, color="blue"
             )
 
-        # hydro custom
+        # Hydrostatic parts (if you use add_concrete_pressure_hydro)
         for hp in self._hydro_parts:
             start = hp["start"]
             end = hp["end"]
             flat_a, flat_b = hp["flat"]
             tri_a, tri_b, _w1_tri = hp["tri"]
             wmax_kNpm = hp["wmax_kNpm"]
-
             y_top = 0.35
             y_tail = 0.05
 
             if flat_b - flat_a > 1e-12:
                 ax.hlines(y_top, flat_a, flat_b, colors="blue", linewidth=1.8)
-
             if tri_b - tri_a > 1e-12:
                 ax.plot([tri_a, tri_b], [y_top, y_tail], color="blue", linewidth=1.8)
 
@@ -374,18 +350,15 @@ class BeamModel:
                     lam = max(0.0, min(1.0, (tri_b - x_i) / L_tri))
                     y_head = y_tail + lam * (y_top - y_tail)
                 ax.annotate(
-                    "",
-                    xy=(x_i, y_tail),
-                    xytext=(x_i, y_head),
+                    "", xy=(x_i, y_tail), xytext=(x_i, y_head),
                     arrowprops=dict(arrowstyle="->", color="blue", linewidth=1.5),
                 )
-
             ax.text(
                 0.5 * (start + end), 0.52, f"{wmax_kNpm:.2f} kN/m",
                 ha="center", va="bottom", fontsize=9, color="blue"
             )
 
-        # point loads
+        # Point loads (red arrows and label)
         for (xp, P) in self.point_loads:
             if P >= 0:
                 ax.annotate("", xy=(xp, 0.06), xytext=(xp, 0.55),
@@ -398,14 +371,26 @@ class BeamModel:
             ax.text(xp, text_y, f"{abs(P) / 1e3:.2f} kN",
                     ha="center", va="bottom", fontsize=9, color="red")
 
-        ax.set_xlim(-0.02 * L, 1.02 * L)
-        ax.set_ylim(-0.75, 0.7)
         plt.tight_layout()
         return fig
 
     def plot_SFD(self, results):
         fig, ax = plt.subplots(figsize=(10, 2.5))
+
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.axhline(0, color='grey', linewidth=1.0)
+
+        ax.xaxis.set_major_locator(MaxNLocator(nbins=10))
+        ax.yaxis.set_major_locator(
+            MaxNLocator(nbins=6, integer=True, steps=[1, 2, 5, 10])
+        )
+        ax.yaxis.set_major_formatter('{x:.0f}')
+        ax.minorticks_off()
+        ax.grid(True, which='major', axis='both', color='grey', linewidth=0.5, alpha=0.35)
+
         fig.suptitle("SHEAR FORCE DIAGRAM", fontsize=9, fontweight='bold', y=1.02)
+
         x, V = results["x"], results["V_kN"]
 
         if self.perm_shear is not None and np.isfinite(self.perm_shear):
@@ -420,21 +405,29 @@ class BeamModel:
             ax.plot(x, V, color="blue", linewidth=2)
             ax.fill_between(x, 0, V, alpha=0.2, color="blue")
 
-        for xt in np.arange(0, self.L + 0.5, 0.5):
-            ax.axvline(xt, color="grey", linestyle=":", linewidth=0.5)
-
-        ymin, ymax = ax.get_ylim()
-        for yt in np.arange(np.floor(ymin * 2) / 2, np.ceil(ymax * 2) / 2 + 0.5, 0.5):
-            ax.axhline(yt, color="grey", linestyle=":", linewidth=0.5)
-
         ax.set_ylabel("Shear (kN) (upward +)")
         ax.set_xlabel("x (m)")
+
         self._annotate_extrema(ax, x, V, "kN", check=(self.perm_shear, self.grade))
         return fig
 
     def plot_BMD(self, results):
         fig, ax = plt.subplots(figsize=(10, 2.5))
+
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.axhline(0, color='grey', linewidth=1.0)
+
+        ax.xaxis.set_major_locator(MaxNLocator(nbins=10))
+        ax.yaxis.set_major_locator(
+            MaxNLocator(nbins=6, integer=True, steps=[1, 2, 5, 10])
+        )
+        ax.yaxis.set_major_formatter('{x:.0f}')
+        ax.minorticks_off()
+        ax.grid(True, which='major', axis='both', color='grey', linewidth=0.5, alpha=0.35)
+
         fig.suptitle("BENDING MOMENT DIAGRAM", fontsize=9, fontweight='bold', y=1.02)
+
         x, M = results["x"], results["M_kNm"]
 
         if self.perm_moment is not None and np.isfinite(self.perm_moment):
@@ -449,38 +442,64 @@ class BeamModel:
             ax.plot(x, M, color="blue")
             ax.fill_between(x, 0, M, alpha=0.2, color="blue")
 
-        for xt in np.arange(0, self.L + 0.5, 0.5):
-            ax.axvline(xt, color="grey", linestyle=":", linewidth=0.5)
-
-        ymin, ymax = ax.get_ylim()
-        for yt in np.arange(np.floor(ymin * 2) / 2, np.ceil(ymax * 2) / 2 + 0.5, 0.5):
-            ax.axhline(yt, color="grey", linestyle=":", linewidth=0.5)
-
         ax.set_ylabel("Moment (kNm)")
         ax.set_xlabel("x (m)")
+
         self._annotate_extrema(ax, x, M, "kNm", check=(self.perm_moment, self.grade))
+        ax.invert_yaxis()
         return fig
 
     def plot_deflection(self, results):
+        """Plot deflection diagram completely clean: no grid, no spines, no ticks."""
         fig, ax = plt.subplots(figsize=(10, 2.5))
-        fig.suptitle("DEFLECTION", fontsize=9, fontweight='bold', y=1.02)
+
+        # 1️⃣ Spines (outer rectangle) hatado
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+
+        # 2️⃣ Grid lines off
+        ax.grid(False)
+        ax.minorticks_off()
+
+        # 3️⃣ Tick marks off
+        ax.tick_params(left=False, bottom=False)
+
+        # 4️⃣ Agar tick labels (numbers) bhi nahi chahiye:
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+
         x, y = results["x"], results["w_mm"]
+        ymin, ymax = float(np.nanmin(y)), float(np.nanmax(y))
+        pad = 0.05 * max(1e-9, ymax - ymin)
+        ymin -= pad
+        ymax += pad
+        ax.set_ylim(ymin, ymax)
+
+        fig.suptitle("DEFLECTION", fontsize=9, fontweight='bold', y=1.02)
         ax.plot(x, y, color="blue", linewidth=2)
         ax.fill_between(x, 0, y, alpha=0.2, color="blue")
         ax.set_ylabel("Deflection (mm)")
         ax.set_xlabel("x (m)")
+
         self._annotate_extrema(ax, x, y, "mm")
         return fig
+
+
+
+
 
     def _annotate_extrema(self, ax, x, y, units, check=None):
         y_max = y[np.argmax(y)]
         x_max = x[np.argmax(y)]
         y_min = y[np.argmin(y)]
         x_min = x[np.argmin(y)]
+
         msg1 = f"Max = {y_max:.2f} {units} at x = {x_max:.2f} m"
         msg2 = f"Min = {y_min:.2f} {units} at x = {x_min:.2f} m"
+
         if check and check[0] is not None:
             limit, grade = check
             msg1 += f" | Permissible = {limit:.2f} {units} ({grade})"
+
         ax.text(0.5, -0.25, msg1, transform=ax.transAxes, ha="center", va="top")
         ax.text(0.5, -0.37, msg2, transform=ax.transAxes, ha="center", va="top")

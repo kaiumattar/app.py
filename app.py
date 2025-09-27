@@ -114,19 +114,18 @@ st.markdown("""
 
 /* 75% Zoom wrapper for Analysis tab (screen only) */
 .zoom-75 {
-  transform: scale(0.75);
+  transform: scale(0.5);
   transform-origin: top center;
-  width: 133.333%;
+  width: 2%;
   margin: 0 auto;
 }
-@media print { .zoom-75 { transform: none !important; width: 100% !important; } }
 
-/* screen: hide print blocks */
+/* Screen: hide print-only blocks */
 @media screen {
   .print-section, .print-graphs, .print-only { display:none !important; }
 }
 
-/* print: super-small top margin and no extra paddings */
+/* Print: general layout & typography */
 @media print {
   @page { size: A4 portrait; margin: 1mm 12mm 12mm 12mm; }
   .block-container { padding-top: 0 !important; }
@@ -185,6 +184,8 @@ st.markdown("""
     font-weight: 600;
   }
 }
+
+/* Footer markers */
 @media print {
   @page {
     @bottom-left {
@@ -202,22 +203,44 @@ st.markdown("""
   }
 }
 
-.print-graphs { page-break-before: always; text-align: center; }
-.print-graphs img { display: block; margin: 10mm auto; max-width: 95%; height: auto; }
+/* --- PRINT SETTINGS (UPDATED) --- */
+
+/* Tables section: let it grow freely. No forced break BEFORE or AFTER. */
+.print-section {
+    /* no page-break rules, so if it grows, it will flow naturally to page 2 */
+}
+
+/* Graphs section: always start on a fresh page, and never split */
+.print-graphs {
+    page-break-before: always;   /* graphs start on a new page */
+    page-break-inside: avoid;    /* graphs won't be split across pages */
+    text-align: center;
+}
+
+/* Each graph image/canvas: keep each intact on one page */
+.print-graphs img,
+.print-graphs canvas {
+    page-break-inside: avoid;
+    break-inside: avoid;         /* modern browsers */
+    display: block;
+    margin: 10mm auto;
+    max-width: 95%;
+    height: auto;
+}
+
+/* keep print-only blocks visible during print */
 .print-only, .print-section, .print-graphs { display: block !important; }
+
+/* existing scale helper (unchanged) */
 .print-scale-75 {
     transform: scale(0.75);
     transform-origin: top center;
-    width: 133.333%;
+    width: 75%;
     margin: 0 auto;
 }
-html, body {
-    height: auto !important;
-}
-.block-container {
-    margin-bottom: 0 !important;
-    padding-bottom: 0 !important;
-}
+
+html, body { height: auto !important; }
+.block-container { margin-bottom: 0 !important; padding-bottom: 0 !important; }
 .custom-footer {
     display: flex;
     justify-content: space-between;
@@ -229,10 +252,7 @@ html, body {
     color: #2c3e50;
     font-weight: 600;
 }
-.custom-footer .footer-text {
-    flex: 1;
-    text-align: center;
-}
+.custom-footer .footer-text { flex: 1; text-align: center; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -494,7 +514,7 @@ with tab1:
                 )
 
             try:
-                res = beam.solve(max_elem_len=0.001)
+                res = beam.solve(max_elem_len=0.002)
             except ValueError as e:
                 st.error(str(e))
                 res = None
@@ -525,16 +545,6 @@ with tab1:
                         f'</div>', unsafe_allow_html=True
                     )
                 st.markdown('<h1 style="font-size:15px;text-align:center;">BEAM ANALYSIS REPORT</h1>', unsafe_allow_html=True)
-
-                st.markdown('<h2 style="font-size:15px;">INPUT SUMMARY</h2>', unsafe_allow_html=True)
-                input_summary = pd.DataFrame([
-                    [f"{selected_section} Length", f"{L} m"],
-                    ["Moment of Inertia (I)", f"{I_cm4:.0f} cm⁴"],
-                    ["Young's Modulus (E)", f"{E_Nmm2:.0f} MPa"],
-                    ["Grade", grade]
-                ], columns=["General Info", "Value"])
-                input_summary.index = np.arange(1, len(input_summary)+1)
-                st.table(input_summary)
 
                 st.markdown('<h2 style="font-size:15px;">ANALYSIS RESULTS</h2>', unsafe_allow_html=True)
                 st.subheader("Reactions")
