@@ -340,27 +340,22 @@ with tab1:
         st.title("Hut Beam Analysis")
         st.subheader("Member Section (from sections.csv)")
 
-        # ─────────────── REPLACED BLOCK STARTS HERE ───────────────
         section_list = sections_df["SectionName"].dropna().tolist() if not sections_df.empty else []
         selected_section_default = saved_inputs.get("SectionName", "--Manual--")
         if selected_section_default not in (["--Manual--"] + section_list):
             selected_section_default = "--Manual--"
 
-        # ➊ Dropdown to either choose or go manual
         selected_section = st.selectbox(
             "Select a Section",
             ["--Manual--"] + section_list,
             index=(["--Manual--"] + section_list).index(selected_section_default)
         )
 
-        # ➋ If manual, show a text box so the user can type a custom name
         if selected_section == "--Manual--":
             manual_name = st.text_input("Type custom section name",
                                         value=saved_inputs.get("ManualSectionName",""))
-            # add ** to indicate user typed it
             if manual_name.strip():
                 selected_section = manual_name.strip() + "**"
-        # ─────────────── REPLACED BLOCK ENDS HERE ───────────────
 
         if selected_section != "--Manual--" and not sections_df.empty:
             r = sections_df.loc[sections_df["SectionName"] == selected_section].iloc[0] if selected_section in sections_df["SectionName"].values else None
@@ -371,7 +366,6 @@ with tab1:
                 perm_moment_default = float(r["PermissibleMoment_kNm"]) if pd.notna(r["PermissibleMoment_kNm"]) else 20.0
                 grade_default = str(r["Grade"]) if pd.notna(r["Grade"]) else "Custom"
             else:
-                # Selected was a manual custom name with **; fall back to defaults
                 default_E = 210000.0; default_I = 1000.0
                 perm_shear_default = 50.0; perm_moment_default = 20.0
                 grade_default = "Custom"
@@ -499,7 +493,7 @@ with tab1:
             st.info(f"Lh = {Lh:.3f} m | effective span = {L_eff:.3f} m | max intensity = {w_max_kNpm:.3f} kN/m | Q = {resultant_kN:.3f} kN")
 
         solve_btn = st.button("Solve", type="primary")
-        st.markdown('</div>', unsafe_allow_html=True)  # end print-hide
+        st.markdown('</div>', unsafe_allow_html=True)
 
     with right_col:
         if solve_btn:
@@ -514,7 +508,11 @@ with tab1:
                 )
 
             try:
-                res = beam.solve(max_elem_len=0.001)
+                # Prefer sparse solver for speed; fallback to dense if needed
+                if hasattr(beam, "solve_sparse"):
+                    res = beam.solve_sparse(max_elem_len=0.001)
+                else:
+                    res = beam.solve(max_elem_len=0.001)
             except ValueError as e:
                 st.error(str(e))
                 res = None
@@ -549,7 +547,6 @@ with tab1:
                 st.markdown('<h2 style="font-size:15px;">ANALYSIS RESULTS</h2>', unsafe_allow_html=True)
                 st.subheader("Reactions")
 
-                # ---------- UPDATED REACTIONS TABLE (on-screen) ----------
                 if res["reactions_kN"]:
                     reac_df = pd.DataFrame(res["reactions_kN"], columns=["Support at (m)", "Ry (kN)"])
                     if not reac_df.empty:
@@ -557,7 +554,6 @@ with tab1:
                         reac_df.insert(1, "Rx (kN)", 0.0)
                         reac_df["Mx (kN-m)"] = 0.0
                         reac_df.index = np.arange(1, len(reac_df)+1)
-                        # ✅ Ry sign flip karke text format karo
                         reac_df["Ry (kN)"] = reac_df["Ry (kN)"].apply(lambda v: f"{v * -1:.2f} kN")
                     st.table(reac_df)
                 else:
@@ -591,7 +587,6 @@ with tab1:
                 st.pyplot(beam.plot_SFD(res))
                 st.pyplot(beam.plot_BMD(res))
 
-                # ✅ Deflection plot without re-setting grid/locators
                 fig = beam.plot_deflection(res)
                 ax = fig.gca()
                 ax.invert_yaxis()
@@ -660,7 +655,6 @@ with tab4:
     <hr>
     """, unsafe_allow_html=True)
 
-# -------- PRINT-ONLY RENDER (any tab) ----------
 def render_print_only():
     res = st.session_state.get("last_res")
     ctx = st.session_state.get("last_ctx")
@@ -702,14 +696,12 @@ def render_print_only():
     st.markdown('<h2 style="font-size:15px;">INPUT SUMMARY</h2>', unsafe_allow_html=True)
     st.table(input_summary)
 
-    # ---------- UPDATED REACTIONS TABLE (print-only) ----------
     reac_df = pd.DataFrame(res["reactions_kN"], columns=["Support at (m)", "Ry (kN)"])
     if not reac_df.empty:
         reac_df = reac_df.sort_values(by="Support at (m)").reset_index(drop=True)
         reac_df.insert(1, "Rx (kN)", 0.0)
         reac_df["Mx (kN-m)"] = 0.0
         reac_df.index = np.arange(1, len(reac_df)+1)
-        # ✅ Ry sign flip and text formatting
         reac_df["Ry (kN)"] = reac_df["Ry (kN)"].apply(lambda v: f"{v * -1:.2f} kN")
     st.markdown('<h2 style="font-size:15px;">ANALYSIS RESULTS</h2>', unsafe_allow_html=True)
     st.markdown("**Reactions**", unsafe_allow_html=True)
@@ -745,14 +737,11 @@ def render_print_only():
     st.pyplot(beam_p.plot_SFD(res))
     st.pyplot(beam_p.plot_BMD(res))
 
-    # ✅ Deflection plot without re-setting grid/locators
     fig = beam_p.plot_deflection(res)
     ax = fig.gca()
     ax.invert_yaxis()
     st.pyplot(fig)
 
     st.markdown('</div>', unsafe_allow_html=True)
-    # temp commit check
-
 
 render_print_only()
