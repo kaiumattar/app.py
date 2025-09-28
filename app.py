@@ -514,7 +514,7 @@ with tab1:
                 )
 
             try:
-                res = beam.solve(max_elem_len=0.002)
+                res = beam.solve(max_elem_len=0.001)
             except ValueError as e:
                 st.error(str(e))
                 res = None
@@ -553,7 +553,7 @@ with tab1:
                     df = df.sort_values(by="Support at (m)").reset_index(drop=True)
                     df.index = df.index + 1
                     df["Support at (m)"] = df["Support at (m)"].apply(lambda v: f"{v:.2f} m")
-                    df["Ry (kN)"] = df["Ry (kN)"].apply(lambda v: f"{abs(v):.2f} kN")
+                    df["Ry (kN)"] = df["Ry (kN)"].apply(lambda v: f"{-v:.2f} kN")
                     st.dataframe(df)
                 else:
                     st.write("No supports / reactions.")
