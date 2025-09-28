@@ -508,6 +508,8 @@ class BeamModel:
 
         msg1 = f"Max = {y_max:.2f} {units} at x = {x_max:.2f} m"
         msg2 = f"Min = {y_min:.2f} {units} at x = {x_min:.2f} m"
+    # temp commit check
+
 
         if check and check[0] is not None:
             limit, grade = check
