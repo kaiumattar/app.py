@@ -1,7 +1,6 @@
 # Hut Beam Analysis
 
 [![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://hutbeamanalysis.streamlit.app)
-
 Ultra-fast beam calculator powered by a **sparse FEM** solver.  
 **Live app:** https://hutbeamanalysis.streamlit.app
 
@@ -18,10 +17,14 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 streamlit run app.py
-![Hut Beam Analysis](logo.png)
+```
+## Screenshot
+<img width="890" height="892" alt="image" src="https://github.com/user-attachments/assets/71c05ced-4505-445f-8b05-9de8e8d5078b" />
+
 ## License
 This project is licensed under the MIT License.  
 See the [LICENSE](./LICENSE) file for details.
+
 ## Contact
 Maintainer: Kaium Attar  
 Email: [kaiumattar@gmail.com](mailto:kaiumattar@gmail.com)  
