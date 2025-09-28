@@ -1,6 +1,0 @@
-streamlit>=1.34
-numpy
-pandas
-matplotlib
-bleach
-jsonschema

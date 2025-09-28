@@ -2,6 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.ticker import MaxNLocator, MultipleLocator
+from scipy.sparse import lil_matrix
+from scipy.sparse.linalg import spsolve
 
 class BeamModel:
     """Finite-element (Euler–Bernoulli) continuous beam model.
@@ -209,6 +211,134 @@ class BeamModel:
             "V_kN": np.concatenate(Ve) / 1e3,
             "w_mm": np.concatenate(we) * 1e3,
             "reactions_kN": reactions
+        }
+
+    # ---------- NEW: Sparse solver (same output schema as solve) ----------
+    def solve_sparse(self, max_elem_len=0.25):
+        import numpy as np
+
+        x_nodes = self._build_mesh(max_elem_len=max_elem_len)
+        n = len(x_nodes)
+        dof = 2 * n
+
+        # Sparse global matrices
+        K = lil_matrix((dof, dof), dtype=float)
+        F = np.zeros(dof, dtype=float)
+
+        # --- Element assembly (same formulation as dense) ---
+        for e in range(n - 1):
+            xa, xb = x_nodes[e], x_nodes[e + 1]
+            Le = xb - xa
+
+            ke = (self.E * self.I / Le ** 3) * np.array(
+                [
+                    [12, 6 * Le, -12, 6 * Le],
+                    [6 * Le, 4 * Le ** 2, -6 * Le, 2 * Le ** 2],
+                    [-12, -6 * Le, 12, -6 * Le],
+                    [6 * Le, 2 * Le ** 2, -6 * Le, 4 * Le ** 2],
+                ],
+                float,
+            )
+            idx = [2 * e, 2 * e + 1, 2 * e + 2, 2 * e + 3]
+
+            # assemble ke into sparse K
+            for r in range(4):
+                for c in range(4):
+                    K[idx[r], idx[c]] += ke[r, c]
+
+            # UDL load contribution (same averaging approach)
+            for (a, b, w1, w2) in self.udls:
+                ov_a = max(xa, a)
+                ov_b = min(xb, b)
+                overlap = max(0.0, ov_b - ov_a)
+                if overlap > 1e-12:
+                    if b - a > 1e-12:
+                        t1 = (ov_a - a) / (b - a)
+                        t2 = (ov_b - a) / (b - a)
+                        w_a = w1 + (w2 - w1) * max(0.0, min(1.0, t1))
+                        w_b = w1 + (w2 - w1) * max(0.0, min(1.0, t2))
+                        w_avg_local = 0.5 * (w_a + w_b)
+                    else:
+                        w_avg_local = 0.5 * (w1 + w2)
+                    frac = overlap / Le
+                    F[idx] += frac * self._consistent_load_vec_udl(w_avg_local, Le)
+
+        # Point loads
+        for (xp, P) in self.point_loads:
+            j = int(np.argmin(np.abs(x_nodes - xp)))
+            F[2 * j] += P
+
+        # Springs
+        for (xs, k) in self.spring_supports:
+            j = int(np.argmin(np.abs(x_nodes - xs)))
+            K[2 * j, 2 * j] += k
+
+        # Boundary conditions
+        bc = set()
+        for (xs, kind) in self.supports:
+            j = int(np.argmin(np.abs(x_nodes - xs)))
+            bc.add(2 * j)
+            if kind == 'fixed':
+                bc.add(2 * j + 1)
+
+        bc = sorted(bc)
+        free = np.setdiff1d(np.arange(dof), bc)
+        if free.size == dof:
+            raise ValueError("Model is under-restrained: add at least one support/spring.")
+
+        # Solve sparse system (only free-DOF block)
+        Kff = K.tocsr()[free][:, free]
+        Uf = spsolve(Kff, F[free])
+
+        U = np.zeros(dof, dtype=float)
+        U[free] = Uf
+
+        # Reactions
+        R = (K.tocsr() @ U) - F
+        reactions = [(float(x_nodes[b // 2]), float(R[b] / 1e3)) for b in bc]  # kN
+
+        # Post-processing (same as dense)
+        v = U[0::2]
+        th = U[1::2]
+
+        xe, Me, Ve, we = [], [], [], []
+        for e in range(n - 1):
+            xa, xb = x_nodes[e], x_nodes[e + 1]
+            Le = xb - xa
+            v1, t1, v2, t2 = v[e], th[e], v[e + 1], th[e + 1]
+
+            s = np.linspace(0, 1, 20)
+            xloc = xa + s * Le
+
+            N1 = 1 - 3 * s ** 2 + 2 * s ** 3
+            N2 = Le * (s - 2 * s ** 2 + s ** 3)
+            N3 = 3 * s ** 2 - 2 * s ** 3
+            N4 = Le * (-s ** 2 + s ** 3)
+            wvals = N1 * v1 + N2 * t1 + N3 * v2 + N4 * t2
+
+            d2N1 = (-6 + 12 * s) / Le ** 2
+            d2N2 = (-4 + 6 * s) / Le
+            d2N3 = (6 - 12 * s) / Le ** 2
+            d2N4 = (-2 + 6 * s) / Le
+            curv = d2N1 * v1 + d2N2 * t1 + d2N3 * v2 + d2N4 * t2
+            M = self.E * self.I * curv
+            V = -np.gradient(M, xloc, edge_order=2)
+
+            xe.append(xloc)
+            Me.append(M)
+            Ve.append(V)
+            we.append(wvals)
+
+        x_plot = np.concatenate(xe)
+
+        return {
+            "x_nodes": x_nodes,
+            "deflection_mm": v * 1e3,
+            "x": x_plot,
+            "M_kNm": -np.concatenate(Me) / 1e3,
+            "V_kN": np.concatenate(Ve) / 1e3,
+            "w_mm": np.concatenate(we) * 1e3,
+            "reactions_kN": reactions,
         }
 
     def plot_FBD(self, results):
