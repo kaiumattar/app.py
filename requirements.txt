@@ -1,6 +1,6 @@
-streamlit>=1.34
-numpy
-pandas
-matplotlib
-bleach
-jsonschema
+streamlit==1.50.0
+numpy==2.3.3
+pandas==2.3.2
+matplotlib==3.10.6
+bleach==6.2.0
+jsonschema==4.25.1
