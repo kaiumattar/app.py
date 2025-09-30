@@ -7,7 +7,7 @@ import numpy as np
 import bleach
 from jsonschema import Draft7Validator, ValidationError
 import numpy.linalg as npl
-import matplotlib.pyplot as plt  # ⟵ added for FBD drawing
+import matplotlib.pyplot as plt  # ⟵ for FBD drawing
 
 st.set_page_config(layout="wide")
 
@@ -20,54 +20,109 @@ table th { background-color: #f0f0f0 !important; font-weight: 600 !important; }
 """, unsafe_allow_html=True)
 
 # ───────────────────────────────────────────────────────────────────────────────
-# FBD drawer (lightweight; runs on every input change)
+# FINAL: Live FBD drawer (print-style look) with dimension labels & colored arrows
 # ───────────────────────────────────────────────────────────────────────────────
-import streamlit as st as st_fbd_alias  # avoid accidental shadowing if pasted elsewhere
-def draw_fbd(L, supports=None, point_loads=None, udls=None):
-    supports = supports or []; point_loads = point_loads or []; udls = udls or []
-    fig, ax = plt.subplots(figsize=(7, 2.2))
-    ax.plot([0, L], [0, 0], lw=6, color="#2f4858")  # beam line
+def draw_fbd_live(L, supports=None, point_loads=None, udls=None):
+    supports = supports or []
+    point_loads = point_loads or []
+    udls = udls or []
 
-    # supports
+    fig, ax = plt.subplots(figsize=(8, 2.5))
+
+    # Beam line
+    ax.plot([0, L], [0, 0], lw=6, color="#2f4858")
+
+    # ---- Dimension lines for beam segments ----
+    # NOTE: exclude point loads (only beam ends + supports)
+    x_marks = [0, L]
     for s in supports:
         try:
-            x = float(s.get("x", s.get("X", 0)))
-            kind = str(s.get("kind", s.get("type", "pin"))).lower()
+            x_marks.append(float(s.get("x", 0)))
+        except Exception:
+            pass
+    x_marks = sorted(set(x_marks))
+
+    for i in range(len(x_marks)-1):
+        a, b = x_marks[i], x_marks[i+1]
+        ax.annotate("", xy=(a, -0.25), xytext=(b, -0.25),
+                    arrowprops=dict(arrowstyle="<->", lw=1))
+        ax.text((a+b)/2, -0.30, f"{(b-a):.2f} m",
+                ha="center", va="top", fontsize=8, color="black")
+
+    # End markers
+    ax.text(0, -0.05, "0 m", ha="center", va="top", fontsize=9)
+    ax.text(L, -0.05, f"{L:.2f} m", ha="center", va="top", fontsize=9)
+
+    # ---- Supports ----
+    for s in supports:
+        try:
+            x = float(s.get("x", 0))
+            kind = str(s.get("kind", "pin")).lower()
         except Exception:
             continue
-        ax.plot([x, x], [0, -0.08*L], lw=2, color="#333")
-        ax.text(x, -0.12*L, kind, ha="center", va="top", fontsize=9)
 
-    # point loads (P in kN)
+        if kind in ["pin", "roller"]:
+            tri = plt.Polygon([[x-0.1, 0], [x+0.1, 0], [x, -0.18]],
+                               closed=True, facecolor="white",
+                               edgecolor="black", lw=1.5)
+            ax.add_patch(tri)
+        elif kind == "fixed":
+            ax.add_patch(plt.Rectangle((x-0.05, -0.18), 0.1, 0.18,
+                                       facecolor="black"))
+
+        ax.text(x, -0.22, kind, ha="center", va="top", fontsize=8)
+
+    # ---- Point Loads (DOWNWARD, beam ke upar shaft) ----
     for p in point_loads:
         try:
-            x = float(p.get("x", p.get("X", 0)))
-            P = float(p.get("P", p.get("load", 0)))
+            x = float(p.get("x", 0))
+            P = float(p.get("P", 0))
         except Exception:
             continue
-        ax.annotate("", xy=(x, 0.25*L), xytext=(x, 0.02*L),
-                    arrowprops=dict(arrowstyle="->", lw=2))
-        ax.text(x, 0.27*L, f"{P:g} kN", ha="center", va="bottom", fontsize=9)
+        ax.annotate("", xy=(x, 0.02), xytext=(x, 0.25),  # shaft upar, head neeche
+                    arrowprops=dict(arrowstyle="->", lw=1.8, color="red"))
+        ax.text(x, 0.28, f"{P:.2f} kN", ha="center", va="bottom",
+                fontsize=9, color="red")
 
-    # UDLs (w1,w2 in kN/m)
+    # ---- UDLs (DOWNWARD, shaft upar) ----
     for u in udls:
         try:
-            a = float(u.get("a", u.get("start", 0)))
-            b = float(u.get("b", u.get("end", a)))
-            w1 = float(u.get("w1", u.get("w", 0)))
+            a = float(u.get("a", 0))
+            b = float(u.get("b", a))
+            w1 = float(u.get("w1", 0))
             w2 = float(u.get("w2", w1))
-        except Exception:
+        except:
             continue
-        n = 14
-        xs = [a + (b-a)*i/(n-1) for i in range(n)]
+        n = 12
+        xs = np.linspace(a, b, n)
         for xi in xs:
-            ax.annotate("", xy=(xi, 0.18*L), xytext=(xi, 0.02*L),
-                        arrowprops=dict(arrowstyle="-|>", lw=1.2))
-        label = f"{w1:g}" + (f"→{w2:g}" if abs(w2-w1)>1e-9 else "") + " kN/m"
-        ax.text((a+b)/2, 0.20*L, label, ha="center", fontsize=9)
+            ax.annotate("", xy=(xi, 0.02), xytext=(xi, 0.18),  # shaft upar, head neeche
+                        arrowprops=dict(arrowstyle="-|>", lw=1.2, color="blue"))
+        label = f"{w1:g}" + (f"→{w2:g}" if abs(w2-w1) > 1e-9 else "") + " kN/m"
+        ax.text((a+b)/2, 0.20, label, ha="center", fontsize=9, color="blue")
 
-    ax.set_xlim(-0.05*L, 1.05*L); ax.set_ylim(-0.18*L, 0.32*L)
+# ---- Concrete pressure (triangular load) ----
+    if "hydro" in st.session_state.get("saved_inputs", {}):
+        h = st.session_state["saved_inputs"]["hydro"]
+        a, b = h.get("x_start", 0), h.get("x_end", 0)
+        w = h.get("pressure_kNpm2", 0) * h.get("influence_m", 0)
+        xs = np.linspace(a, b, 6)
+        for xi in xs:
+            scale = (xi - a) / (b - a) if b > a else 0
+            wi = w * scale
+            ax.annotate("", xy=(xi, 0.02), xytext=(xi, 0.1 + 0.1*scale),
+                        arrowprops=dict(arrowstyle="-|>", lw=1.2, color="purple"))
+        ax.text((a+b)/2, 0.25, f"Concrete Pressure\nmax {w:.1f} kN/m", 
+                ha="center", fontsize=8, color="purple")
+
+    ax.set_xlim(-0.2, L+0.2)
+    ax.set_ylim(-0.4, 0.35)
     ax.axis("off")
+
+    ax.set_xlim(-0.2, L+0.2)
+    ax.set_ylim(-0.4, 0.35)
+    ax.axis("off")
+
     st.pyplot(fig, use_container_width=True)
     plt.close(fig)
 
@@ -83,7 +138,7 @@ def sanitize_html(s: str) -> str:
 
 def details_html_from_state() -> str:
     raw = st.session_state.get("project_details", "") or ""
-    safe = sanitize_html(raw).replace("\n", "<br>")
+    safe = sanitize_html(raw).replace("\\n", "<br>")
     return (f'<div class="report-details" '
             f'style="text-align:left; font-size:12pt; white-space:normal;">{safe}</div>') if safe else ""
 
@@ -159,50 +214,96 @@ def scan_with_clamav_bytes(file_bytes: bytes):
 st.markdown("""
 <style>
 /* Top logo (screen only, above tabs) */
-.app-top-logo { display:flex; align-items:center; justify-content:center; margin:6px 0 6px; }
-.app-top-logo img { height:52px; }
+.app-top-logo { 
+  display:flex; 
+  align-items:center; 
+  justify-content:center; 
+  margin:0 0 4px 0;
+  padding:0;
+}
+.app-top-logo img { 
+  height:40px;
+}
 
 /* 75% Zoom wrapper for Analysis tab (screen only) */
-.zoom-75 { transform: scale(0.5); transform-origin: top center; width: 2%; margin: 0 auto; }
+.zoom-75 { 
+  transform: scale(0.5); 
+  transform-origin: top center; 
+  width: 2%; 
+  margin: 0 auto; 
+}
 
 /* Screen: hide print-only blocks */
-@media screen { .print-section, .print-graphs, .print-only { display:none !important; } }
+@media screen { 
+  .print-section, .print-graphs, .print-only { display:none !important; } 
+}
 
 /* Print: general layout & typography */
 @media print {
   @page { size: A4 portrait; margin: 1mm 12mm 12mm 12mm; }
   .block-container { padding-top: 0 !important; }
-  header, footer, section[data-testid="stSidebar"], div[role="tablist"], .stTabs, .stFileUploader, .stDownloadButton, button, .stButton, .print-hide, .on-screen-results, .app-top-logo { display: none !important; }
+  header, footer, section[data-testid="stSidebar"], div[role="tablist"], 
+  .stTabs, .stFileUploader, .stDownloadButton, button, .stButton, 
+  .print-hide, .on-screen-results, .app-top-logo { display: none !important; }
   [data-testid="stHorizontalBlock"] > div:first-child { display: none !important; }
-  [data-testid="stHorizontalBlock"] > div:last-child { width: 100% !important; max-width: 100% !important; margin: 0 auto !important; }
-  body { font-family: "Segoe UI", Arial, sans-serif; font-size: 12pt; line-height: 1.3; background: white; }
-  .print-section h1 { text-align: center; font-size: 15pt; margin: 2mm 0 4mm 0; text-transform: uppercase; font-weight: 700; letter-spacing: 1px; }
-  .print-section h2 { text-align: center; font-size: 15pt; margin: 6mm 0 3mm 0; text-transform: uppercase; border-bottom: 1px solid #333; padding-bottom: 2mm; }
-  .print-section table { border-collapse: collapse; width: 90%; margin: 0 auto 8mm auto; table-layout: fixed; }
-  .print-section th, .print-section td { border: 1px solid #666; padding: 4px 6px; text-align: center; font-size: 11pt; word-wrap: break-word; }
-  .print-section th { background-color: #f0f0f0; font-weight: 600; }
-}
-
-/* Footer markers */
-@media print {
-  @page {
-    @bottom-left  { content: "★ Hut Beam Analysis ★"; font-size: 11pt; color: #2c3e50; font-weight: 600; }
-    @bottom-right { content: "Sheet " counter(page); font-size: 11pt; color: #2c3e50; font-weight: 600; }
+  [data-testid="stHorizontalBlock"] > div:last-child { 
+    width: 100% !important; 
+    max-width: 100% !important; 
+    margin: 0 auto !important; 
   }
+  body { 
+    font-family: "Segoe UI", Arial, sans-serif; 
+    font-size: 12pt; 
+    line-height: 1.3; 
+    background: white; 
+  }
+  .print-section h1 { 
+    text-align: center; 
+    font-size: 15pt; 
+    margin: 2mm 0 4mm 0; 
+    text-transform: uppercase; 
+    font-weight: 700; 
+    letter-spacing: 1px; 
+  }
+  .print-section h2 { 
+    text-align: center; 
+    font-size: 15pt; 
+    margin: 6mm 0 3mm 0; 
+    text-transform: uppercase; 
+    border-bottom: 1px solid #333; 
+    padding-bottom: 2mm; 
+  }
+  .print-section table { 
+    border-collapse: collapse; 
+    width: 90%; 
+    margin: 0 auto 8mm auto; 
+    table-layout: fixed; 
+  }
+  .print-section th, .print-section td { 
+    border: 1px solid #666; 
+    padding: 4px 6px; 
+    text-align: center; 
+    font-size: 11pt; 
+    word-wrap: break-word; 
+  }
+  .print-section th { 
+    background-color: #f0f0f0; 
+    font-weight: 600; 
+  }
+
+  /* ✅ Print-only sections visible ONLY in print */
+  .print-only, .print-section, .print-graphs { display:block !important; }
 }
 
 /* --- PRINT SETTINGS (UPDATED) --- */
-/* Tables section: let it grow freely. No forced break BEFORE or AFTER. */
 .print-section { }
 
-/* Graphs section: always start on a fresh page, and never split */
 .print-graphs {
   page-break-before: always;
   page-break-inside: avoid;
   text-align: center;
 }
 
-/* Each graph image/canvas: keep each intact on one page */
 .print-graphs img, .print-graphs canvas {
   page-break-inside: avoid;
   break-inside: avoid;
@@ -213,10 +314,16 @@ st.markdown("""
 }
 
 /* keep print-only blocks visible during print */
+@media print {
 .print-only, .print-section, .print-graphs { display: block !important; }
 
-/* existing scale helper (unchanged) */
-.print-scale-75 { transform: scale(0.75); transform-origin: top center; width: 75%; margin: 0 auto; }
+/* scale helper */
+.print-scale-75 { 
+  transform: scale(0.75); 
+  transform-origin: top center; 
+  width: 75%; 
+  margin: 0 auto; 
+}
 
 html, body { height: auto !important; }
 .block-container { margin-bottom: 0 !important; padding-bottom: 0 !important; }
@@ -227,14 +334,41 @@ html, body { height: auto !important; }
   font-size: 11pt; color: #2c3e50; font-weight: 600;
 }
 .custom-footer .footer-text { flex: 1; text-align: center; }
+
+/* 👇 Added class for shrinking right_col only */
+.right-col-zoom {
+  transform: scale(0.75);
+  transform-origin: top left;
+  width: 133%;   /* compensate so it uses full width */
+}
+
+/* Footer markers */
+@media print {
+  @page {
+    @bottom-left  { content: "★ Hut Beam Analysis ★"; font-size: 11pt; color: #2c3e50; font-weight: 600; }
+    @bottom-right { content: "Sheet " counter(page); font-size: 11pt; color: #2c3e50; font-weight: 600; }
+  }
+}
+
+/* 👇 Fix: Remove Streamlit default top spacing */
+.block-container {
+    padding-top: 0rem !important;
+    margin-top: 0rem !important;
+}
+html, body, [data-testid="stAppViewContainer"] {
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
-if LOGO_DATA_URI:
-    st.markdown(
-        f'<div class="app-top-logo print-hide"><img src="{LOGO_DATA_URI}" alt="Logo"></div>',
-        unsafe_allow_html=True
-    )
+
+#if LOGO_DATA_URI:
+#    st.markdown(
+#        f'<div class="app-top-logo print-hide"><img src="{LOGO_DATA_URI}" alt="Logo"></div>',
+#        unsafe_allow_html=True
+#    )
 
 sections_path = APP_DIR / "sections.csv"
 required_cols = ["SectionName","E_Nmm2","I_cm4","PermissibleShear_kN","PermissibleMoment_kNm","Grade"]
@@ -264,6 +398,21 @@ if "last_res" not in st.session_state:
     st.session_state["last_res"] = None
 
 saved_inputs = st.session_state["saved_inputs"]
+
+# 👇 Yaha pe Logo + Heading tabs ke upar daal rahe hain
+if LOGO_DATA_URI:
+    st.markdown(
+        f"""
+        <div class="app-top-logo print-hide" 
+             style="display:flex; align-items:center; justify-content:center; margin: 0 0 10px 0; padding:0;">
+            <img src="{LOGO_DATA_URI}" style="height:150px; margin-right:10px;">
+            <h1 style="font-size:28px; margin:0; line-height:1; font-weight:700; color:#2c3e50;">
+                Hut Beam Analysis
+            </h1>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 tab1, tab2, tab3, tab4 = st.tabs(["Analysis", "Form", "Files", "Contact Us"])
 
@@ -312,9 +461,11 @@ with tab1:
 
     with left_col:
         st.markdown('<div class="print-hide">', unsafe_allow_html=True)
-        st.title("Hut Beam Analysis")
 
-        st.subheader("Member Section (from sections.csv)")
+        # 👇 Ye line HATA diya gaya hai (title already upar aa gaya hai)
+        # st.title("Hut Beam Analysis")
+
+        st.subheader("User Input")
         section_list = sections_df["SectionName"].dropna().tolist() if not sections_df.empty else []
         selected_section_default = saved_inputs.get("SectionName", "--Manual--")
         if selected_section_default not in (["--Manual--"] + section_list):
@@ -365,8 +516,9 @@ with tab1:
         with col6:
             grade = st.text_input("Grade", value=str(saved_inputs.get("grade", grade_default)))
 
-        E = E_Nmm2 * 1e6
-        I = I_cm4 * 1e-8
+        # Unit conversions
+        E = E_Nmm2 * 1e6   # N/mm² → N/m²
+        I = I_cm4 * 1e-8   # cm⁴ → m⁴
 
         # Supports
         saved_supports = saved_inputs.get("supports", [])
@@ -389,6 +541,12 @@ with tab1:
             supports.append((pos, kind))
             supports_display.append({"x": pos, "kind": kind})
 
+        # ... 👇 yaha se aapka pura Analysis TAB ka code same ka same rahega
+        # (Point loads, UDLs, Springs, Hydro, Solve button, right_col results, etc.)
+        # Maine sirf st.title remove kiya hai upar se.
+
+
+
         # Point Loads (input in kN; internal in N)
         saved_point_loads = saved_inputs.get("point_loads_kN", [])
         n_pl = st.number_input("Number of point loads", min_value=0, step=1, value=int(len(saved_point_loads)))
@@ -402,7 +560,7 @@ with tab1:
                 pos = st.number_input(f"Point load {i+1} position (m)", min_value=0.0, max_value=L, value=default_pos, key=f"pl_pos_{i}")
             with c2:
                 mag_kN = st.number_input(f"Magnitude kN (+down)", value=default_mag_kN, key=f"pl_mag_{i}")
-            point_loads.append((pos, mag_kN*1e3))
+            point_loads.append((pos, mag_kN*1e3))  # to N
             point_display.append({"x": pos, "P": mag_kN})
 
         # UDLs (input in kN/m; internal in N/m)
@@ -424,7 +582,7 @@ with tab1:
                 w1 = st.number_input("Start intensity (kN/m)", value=w1_def, key=f"udl_w1_{i}")
             with c4:
                 w2 = st.number_input("End intensity (kN/m)", value=w2_def, key=f"udl_w2_{i}")
-            udls.append((a, b, w1*1e3, w2*1e3))
+            udls.append((a, b, w1*1e3, w2*1e3))  # to N/m
             udl_display.append({"a": a, "b": b, "w1": w1, "w2": w2})
 
         # Springs
@@ -439,7 +597,7 @@ with tab1:
                 pos = st.number_input(f"Spring {i+1} position (m)", min_value=0.0, value=pos_def, key=f"spring_pos_{i}")
             with c2:
                 k = st.number_input("Stiffness k (kN/m)", value=k_def, key=f"spring_k_{i}")
-            springs.append((pos, k*1e3))
+            springs.append((pos, k*1e3))  # to N/m
 
         # Hydrostatic triangular pressure
         saved_use_hydro = bool(saved_inputs.get("use_conc_hydro", False))
@@ -468,17 +626,51 @@ with tab1:
         solve_btn = st.button("Solve", type="primary")
         st.markdown('</div>', unsafe_allow_html=True)
 
+    # 👇 ek CSS class banate hain 0.75% zoom ke liye
+    st.markdown("""
+    <style>
+    .zoom-0.75 {
+        transform: scale(0.75);
+        transform-origin: top left;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+
     with right_col:
-        # ── Right panel tabs: FBD (live), Shear, Moment, Deflection ──
-        tabs = st.tabs(["FBD", "Shear V", "Moment M", "Deflection w"])
+        st.markdown('<div class="right-col-zoom">', unsafe_allow_html=True)
+        # ---- BEFORE SOLVE: show live FBD ----
+        if not solve_btn:
+            st.subheader("Free Body Diagram (Live)")
+            draw_fbd_live(float(L),
+                          supports=supports_display,
+                          point_loads=point_display,
+                          udls=udl_display)
 
-        # FBD tab: always live (no Solve required)
-        with tabs[0]:
-            draw_fbd(float(L), supports=supports_display, point_loads=point_display, udls=udl_display)
+            # Add dimension info below the FBD
+            st.markdown("#### Beam & Support Details")
+            st.write(f"**Beam Length:** {L} m")
 
-        # On Solve: run heavy analysis and populate remaining tabs
+            if supports_display:
+                st.markdown("**Supports:**")
+                for s in supports_display:
+                    st.write(f"- {s['kind'].capitalize()} at {s['x']} m")
+
+            if point_display:
+                st.markdown("**Point Loads:**")
+                for p in point_display:
+                    st.write(f"- {p['P']} kN at {p['x']} m")
+
+            if udl_display:
+                st.markdown("**UDLs:**")
+                for u in udl_display:
+                    st.write(f"- from {u['a']} m to {u['b']} m, "
+                             f"w1={u['w1']} kN/m → w2={u['w2']} kN/m")
+
+        # ---- AFTER SOLVE: hide live FBD, show results ----
         if solve_btn:
-            beam = BeamModel(L, E, I, perm_shear=perm_shear, perm_moment=perm_moment, grade=grade)
+            beam = BeamModel(L, E, I, perm_shear=perm_shear,
+                             perm_moment=perm_moment, grade=grade)
             for pos, kind in supports:
                 beam.add_support(pos, kind)
             for pos, mag in point_loads:
@@ -494,15 +686,13 @@ with tab1:
                     x_start=x_start,
                     x_end=x_end
                 )
+
             try:
-                # Prefer sparse solver for speed; fallback to dense if needed
-                if hasattr(beam, "solve_sparse"):
-                    res = beam.solve_sparse(max_elem_len=0.001)
-                else:
-                    res = beam.solve(max_elem_len=0.001)
+                res = (beam.solve_sparse(max_elem_len=0.001)
+                       if hasattr(beam, "solve_sparse")
+                       else beam.solve(max_elem_len=0.001))
             except ValueError as e:
-                st.error(str(e))
-                res = None
+                st.error(str(e)); res = None
             except npl.LinAlgError:
                 st.error("Model is unstable/singular. Please add sufficient supports or springs.")
                 res = None
@@ -511,43 +701,53 @@ with tab1:
                 st.session_state["last_res"] = res
                 st.session_state["last_ctx"] = {
                     "L": L, "E": E, "I": I,
-                    "perm_shear": perm_shear, "perm_moment": perm_moment, "grade": grade,
-                    "supports": supports, "point_loads": point_loads, "udls": udls, "springs": springs,
+                    "perm_shear": perm_shear,
+                    "perm_moment": perm_moment,
+                    "grade": grade,
+                    "supports": supports,
+                    "point_loads": point_loads,
+                    "udls": udls,
+                    "springs": springs,
                     "use_conc_hydro": bool(use_conc_hydro),
                     "SectionName": selected_section,
-                    **({"hydro": {"pressure_kNpm2": pressure_kNpm2, "influence_m": influence_m, "x_start": x_start, "x_end": x_end}} if use_conc_hydro else {})
+                    **({"hydro": {"pressure_kNpm2": pressure_kNpm2,
+                                  "influence_m": influence_m,
+                                  "x_start": x_start,
+                                  "x_end": x_end}}
+                       if use_conc_hydro else {})
                 }
 
-                st.markdown('<div class="on-screen-results">', unsafe_allow_html=True)
+                # Results
+                st.markdown('<h2>ANALYSIS RESULTS</h2>', unsafe_allow_html=True)
 
-                det_html = details_html_from_state()
-                if det_html:
-                    st.markdown(det_html, unsafe_allow_html=True)
+                # Solved FBD
+                st.subheader("Free Body Diagram (Solved)")
+                try:
+                    st.markdown('<div class="zoom-75">', unsafe_allow_html=True)
+                    st.pyplot(beam.plot_FBD(res), use_container_width=True)
+                    st.markdown('</div>', unsafe_allow_html=True)
+                except Exception:
+                    st.warning("plot_FBD() not available")
 
-                if LOGO_DATA_URI:
-                    st.markdown(
-                        f'<div style="text-align:center; margin-bottom:6px;">'
-                        f'<img src="{LOGO_DATA_URI}" style="display:block;margin:0 auto 10px auto;width:120px;">'
-                        f'</div>',
-                        unsafe_allow_html=True
-                    )
-
-                st.markdown('<h1 style="font-size:15px;text-align:center;">BEAM ANALYSIS REPORT</h1>', unsafe_allow_html=True)
-                st.markdown('<h2 style="font-size:15px;">ANALYSIS RESULTS</h2>', unsafe_allow_html=True)
-
+                # Reactions
                 st.subheader("Reactions")
                 if res["reactions_kN"]:
-                    reac_df = pd.DataFrame(res["reactions_kN"], columns=["Support at (m)", "Ry (kN)"])
+                    reac_df = pd.DataFrame(res["reactions_kN"],
+                                           columns=["Support at (m)", "Ry (kN)"])
                     if not reac_df.empty:
-                        reac_df = reac_df.sort_values(by="Support at (m)").reset_index(drop=True)
+                        reac_df = reac_df.sort_values(by="Support at (m)") \
+                                         .reset_index(drop=True)
                         reac_df.insert(1, "Rx (kN)", 0.0)
                         reac_df["Mx (kN-m)"] = 0.0
                         reac_df.index = np.arange(1, len(reac_df)+1)
                         reac_df["Ry (kN)"] = reac_df["Ry (kN)"].apply(lambda v: f"{v * -1:.2f} kN")
+                        st.markdown('<div class="zoom-75">', unsafe_allow_html=True)
                         st.table(reac_df)
+                        st.markdown('</div>', unsafe_allow_html=True)
                 else:
                     st.write("No supports / reactions.")
 
+                # Force extremes
                 x = res["x"]; M = res["M_kNm"]; V = res["V_kN"]; w = res["w_mm"]
                 M_max = float(M.max()) if M.size else 0.0
                 M_min = float(M.min()) if M.size else 0.0
@@ -559,76 +759,101 @@ with tab1:
                 V_gov = max(abs(V_max), abs(V_min))
 
                 force_ext = pd.DataFrame([
-                    ["Bending Moment", f"{M_max:.3f}", f"{M_min:.3f}", f"{perm_moment:.3f}" if perm_moment is not None else "", safe_status(M_gov, perm_moment)],
-                    ["Shear", f"{V_max:.3f}", f"{V_min:.3f}", f"{perm_shear:.3f}" if perm_shear is not None else "", safe_status(V_gov, perm_shear)],
-                    ["Deformation", f"{w_max:.3f}", f"{w_min:.3f}", "", ""]
+                    ["Bending Moment", f"{M_max:.3f}", f"{M_min:.3f}",
+                     f"{perm_moment:.3f}" if perm_moment is not None else "", safe_status(M_gov, perm_moment)],
+                    ["Shear", f"{V_max:.3f}", f"{V_min:.3f}",
+                     f"{perm_shear:.3f}" if perm_shear is not None else "", safe_status(V_gov, perm_shear)],
+                    ["Deformation", f"{-w_min:.3f}", f"{-w_max:.3f}", "", ""]
                 ], columns=["Result", "Max", "Min", "Permissible", "Status"])
                 force_ext.index = np.arange(1, len(force_ext)+1)
                 st.markdown("**Force Extremes**", unsafe_allow_html=True)
+                st.markdown('<div class="zoom-75">', unsafe_allow_html=True)
                 st.table(force_ext)
-
-                # Plots into tabs
-                with tabs[1]:
-                    st.pyplot(beam.plot_SFD(res))
-                with tabs[2]:
-                    st.pyplot(beam.plot_BMD(res))
-                with tabs[3]:
-                    fig = beam.plot_deflection(res)
-                    ax = fig.gca()
-                    ax.invert_yaxis()
-                    st.pyplot(fig)
-
-                # Save payload
-                save_inputs = {
-                    "L": L, "E_Nmm2": E_Nmm2, "I_cm4": I_cm4,
-                    "perm_shear": perm_shear, "perm_moment": perm_moment, "grade": grade,
-                    "supports": supports,
-                    "point_loads_kN": [(p[0], p[1]/1e3) for p in point_loads],
-                    "udls_kNpm": [(a,b,w1/1e3,w2/1e3) for (a,b,w1,w2) in udls],
-                    "springs_kNpm": [(p[0], p[1]/1e3) for p in springs],
-                    "use_conc_hydro": bool(use_conc_hydro)
-                }
-                if use_conc_hydro:
-                    save_inputs["hydro"] = {
-                        "pressure_kNpm2": float(pressure_kNpm2),
-                        "influence_m": float(influence_m),
-                        "x_start": float(x_start),
-                        "x_end": float(x_end)
-                    }
-
-                save_payload = {
-                    "inputs": save_inputs,
-                    "project_details": st.session_state.get("project_details", ""),
-                    "results": {
-                        "x_nodes": res["x_nodes"].tolist(),
-                        "deflection_mm": res["deflection_mm"].tolist(),
-                        "x": x.tolist(),
-                        "M_kNm": M.tolist(),
-                        "V_kN": V.tolist(),
-                        "w_mm": w.tolist(),
-                        "reactions_kN": res["reactions_kN"],
-                    }
-                }
-
-                st.markdown('<div class="print-hide">', unsafe_allow_html=True)
-                st.download_button(
-                    "💾 Save Calculation",
-                    data=json.dumps(save_payload, indent=2),
-                    file_name="beam_calculation.json",
-                    mime="application/json",
-                    use_container_width=True
-                )
-                st.markdown("""
-                <div style="margin-top: 12px; margin-bottom: 4px; text-align:center;">
-                  <button onclick="window.top.print()" style="font-size:16px; padding:6px 12px;">
-                    🖨️ Print Full Report
-                  </button>
-                </div>
-                """, unsafe_allow_html=True)
                 st.markdown('</div>', unsafe_allow_html=True)
 
+                # Plots
+                st.subheader("Shear Force Diagram (V)")
+                st.markdown('<div class="zoom-75">', unsafe_allow_html=True)
+                st.pyplot(beam.plot_SFD(res))
+                st.markdown('</div>', unsafe_allow_html=True)
+
+                st.subheader("Bending Moment Diagram (M)")
+                st.markdown('<div class="zoom-75">', unsafe_allow_html=True)
+                st.pyplot(beam.plot_BMD(res))
+                st.markdown('</div>', unsafe_allow_html=True)
+
+                st.subheader("Deflection (w)")
+                fig = beam.plot_deflection(res)
+                fig.gca().invert_yaxis()
+                st.markdown('<div class="zoom-75">', unsafe_allow_html=True)
+                st.pyplot(fig)
+                st.markdown('</div>', unsafe_allow_html=True)
+
+
+
+            # Save payload
+            save_inputs = {
+                "L": L, "E_Nmm2": E_Nmm2, "I_cm4": I_cm4,
+                "perm_shear": perm_shear, "perm_moment": perm_moment, "grade": grade,
+                "supports": supports,
+                "point_loads_kN": [(p[0], p[1]/1e3) for p in point_loads],
+                "udls_kNpm": [(a,b,w1/1e3,w2/1e3) for (a,b,w1,w2) in udls],
+                "springs_kNpm": [(p[0], p[1]/1e3) for p in springs],
+                "use_conc_hydro": bool(use_conc_hydro)
+            }
+            if use_conc_hydro:
+                save_inputs["hydro"] = {
+                    "pressure_kNpm2": float(pressure_kNpm2),
+                    "influence_m": float(influence_m),
+                    "x_start": float(x_start),
+                    "x_end": float(x_end)
+                }
+
+            save_payload = {
+                "inputs": save_inputs,
+                "project_details": st.session_state.get("project_details", ""),
+                "results": {
+                    "x_nodes": res["x_nodes"].tolist(),
+                    "deflection_mm": res["deflection_mm"].tolist(),
+                    "x": x.tolist(),
+                    "M_kNm": M.tolist(),
+                    "V_kN": V.tolist(),
+                    "w_mm": w.tolist(),
+                    "reactions_kN": res["reactions_kN"],
+                }
+            }
+
+            st.markdown('<div class="print-hide">', unsafe_allow_html=True)
+            st.download_button(
+                "💾 Save Calculation",
+                data=json.dumps(save_payload, indent=2),
+                file_name="beam_calculation.json",
+                mime="application/json",
+                use_container_width=True
+            )
+# Just wrap in a condition or comment out
+        if False:  # disable print button
+            st.markdown("""
+<div style="margin-top: 12px; margin-bottom: 4px; text-align:center;">
+  <button id="print-btn" style="font-size:16px; padding:6px 12px;">
+    🖨️ Print Full Report
+  </button>
+</div>
+
+<script>
+document.getElementById("print-btn").addEventListener("click", function() {
+    window.print();
+});
+</script>
+""", unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        # 👇 yeh naya line add karein (close right-col-zoom) — 8 spaces indent
         st.markdown('</div>', unsafe_allow_html=True)
+
     st.markdown('</div>', unsafe_allow_html=True)
+
+
 
 # -------------------- Contact Us TAB --------------------
 with tab4:
@@ -646,6 +871,7 @@ This project is <b>open source</b> and provided <b>free of charge</b> to help ma
 <hr>
 """, unsafe_allow_html=True)
 
+# -------------------- Print-only renderer --------------------
 def render_print_only():
     res = st.session_state.get("last_res")
     ctx = st.session_state.get("last_ctx")
@@ -717,7 +943,7 @@ def render_print_only():
     force_ext = pd.DataFrame([
         ["Bending Moment", f"{M_max:.3f}", f"{M_min:.3f}", f"{ctx['perm_moment']:.3f}" if ctx["perm_moment"] is not None else "", safe_status(M_gov, ctx["perm_moment"])],
         ["Shear", f"{V_max:.3f}", f"{V_min:.3f}", f"{ctx['perm_shear']:.3f}" if ctx["perm_shear"] is not None else "", safe_status(V_gov, ctx["perm_shear"])],
-        ["Deformation", f"{w_max:.3f}", f"{w_min:.3f}", "", ""]
+        ["Deformation", f"{-w_max:.3f}", f"{-w_min:.3f}", "", ""]
     ], columns=["Result", "Max", "Min", "Permissible", "Status"])
     force_ext.index = np.arange(1, len(force_ext)+1)
 
@@ -726,7 +952,14 @@ def render_print_only():
     st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="print-graphs print-only">', unsafe_allow_html=True)
-    st.pyplot(beam_p.plot_FBD(res))
+    # If your BeamModel has a custom FBD plot for printing, keep it; otherwise, show the live FBD prior to print
+    try:
+        st.pyplot(beam_p.plot_FBD(res))
+    except Exception:
+        draw_fbd_live(float(ctx["L"]),
+                      supports=[{"x": pos, "kind": kind} for (pos, kind) in ctx["supports"]],
+                      point_loads=[{"x": pos, "P": p_kN} for (pos, p_kN_N) in ctx["point_loads"] for p_kN in [p_kN_N/1e3]],
+                      udls=[{"a": a, "b": b, "w1": w1/1e3, "w2": w2/1e3} for (a,b,w1,w2) in ctx["udls"]])
     st.pyplot(beam_p.plot_SFD(res))
     st.pyplot(beam_p.plot_BMD(res))
     fig = beam_p.plot_deflection(res)
@@ -735,4 +968,8 @@ def render_print_only():
     st.pyplot(fig)
     st.markdown('</div>', unsafe_allow_html=True)
 
-render_print_only()
+# 👇 Ye block ko tab ke bahar rakho
+with st.container():
+    st.markdown('<div class="print-only">', unsafe_allow_html=True)
+    render_print_only()
+    st.markdown('</div>', unsafe_allow_html=True)
