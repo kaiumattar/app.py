@@ -1,19 +1,32 @@
-# 🎈 Blank app template
+# Hut Beam Analysis
 
-A simple Streamlit app template for you to modify!
+[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://hutbeamanalysis.streamlit.app)
+Ultra-fast beam calculator powered by a **sparse FEM** solver.  
+**Live app:** https://hutbeamanalysis.streamlit.app
 
-[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://blank-app-template.streamlit.app/)
+## Features
+- Supports: pin / roller / fixed, spring supports
+- Loads: point loads, UDL (uniform/linear), concrete hydro pressure
+- Plots: Shear force, Bending moment, Deflection
+- **Speed:** 0.001 m mesh at interactive speed (SciPy sparse solver)
 
-### How to run it on your own machine
+## Quick start (local)
+```bash
+# (Windows)
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+streamlit run app.py
+```
+## Screenshot
+<img width="890" height="892" alt="image" src="https://github.com/user-attachments/assets/71c05ced-4505-445f-8b05-9de8e8d5078b" />
 
-1. Install the requirements
+## License
+This project is licensed under the MIT License.  
+See the [LICENSE](./LICENSE) file for details.
 
-   ```
-   $ pip install -r requirements.txt
-   ```
-
-2. Run the app
-
-   ```
-   $ streamlit run streamlit_app.py
-   ```
+## Contact
+Maintainer: Kaium Attar  
+Email: [kaiumattar@gmail.com](mailto:kaiumattar@gmail.com)  
+Live app: https://hutbeamanalysis.streamlit.app  
+Issues & feedback: [Create an issue](https://github.com/kaiumattar/app.py/issues)
