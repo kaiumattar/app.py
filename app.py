@@ -7,21 +7,69 @@ import numpy as np
 import bleach
 from jsonschema import Draft7Validator, ValidationError
 import numpy.linalg as npl
+import matplotlib.pyplot as plt  # ⟵ added for FBD drawing
 
 st.set_page_config(layout="wide")
 
 # Add CSS for center alignment of all table texts and light grey table headers
 st.markdown("""
-    <style>
-    table th, table td {
-        text-align: center !important;
-    }
-    table th {
-        background-color: #f0f0f0 !important;
-        font-weight: 600 !important;
-    }
-    </style>
+<style>
+table th, table td { text-align: center !important; }
+table th { background-color: #f0f0f0 !important; font-weight: 600 !important; }
+</style>
 """, unsafe_allow_html=True)
+
+# ───────────────────────────────────────────────────────────────────────────────
+# FBD drawer (lightweight; runs on every input change)
+# ───────────────────────────────────────────────────────────────────────────────
+import streamlit as st as st_fbd_alias  # avoid accidental shadowing if pasted elsewhere
+def draw_fbd(L, supports=None, point_loads=None, udls=None):
+    supports = supports or []; point_loads = point_loads or []; udls = udls or []
+    fig, ax = plt.subplots(figsize=(7, 2.2))
+    ax.plot([0, L], [0, 0], lw=6, color="#2f4858")  # beam line
+
+    # supports
+    for s in supports:
+        try:
+            x = float(s.get("x", s.get("X", 0)))
+            kind = str(s.get("kind", s.get("type", "pin"))).lower()
+        except Exception:
+            continue
+        ax.plot([x, x], [0, -0.08*L], lw=2, color="#333")
+        ax.text(x, -0.12*L, kind, ha="center", va="top", fontsize=9)
+
+    # point loads (P in kN)
+    for p in point_loads:
+        try:
+            x = float(p.get("x", p.get("X", 0)))
+            P = float(p.get("P", p.get("load", 0)))
+        except Exception:
+            continue
+        ax.annotate("", xy=(x, 0.25*L), xytext=(x, 0.02*L),
+                    arrowprops=dict(arrowstyle="->", lw=2))
+        ax.text(x, 0.27*L, f"{P:g} kN", ha="center", va="bottom", fontsize=9)
+
+    # UDLs (w1,w2 in kN/m)
+    for u in udls:
+        try:
+            a = float(u.get("a", u.get("start", 0)))
+            b = float(u.get("b", u.get("end", a)))
+            w1 = float(u.get("w1", u.get("w", 0)))
+            w2 = float(u.get("w2", w1))
+        except Exception:
+            continue
+        n = 14
+        xs = [a + (b-a)*i/(n-1) for i in range(n)]
+        for xi in xs:
+            ax.annotate("", xy=(xi, 0.18*L), xytext=(xi, 0.02*L),
+                        arrowprops=dict(arrowstyle="-|>", lw=1.2))
+        label = f"{w1:g}" + (f"→{w2:g}" if abs(w2-w1)>1e-9 else "") + " kN/m"
+        ax.text((a+b)/2, 0.20*L, label, ha="center", fontsize=9)
+
+    ax.set_xlim(-0.05*L, 1.05*L); ax.set_ylim(-0.18*L, 0.32*L)
+    ax.axis("off")
+    st.pyplot(fig, use_container_width=True)
+    plt.close(fig)
 
 # ───────────────── Config / Security ─────────────────
 APP_DIR = Path(__file__).parent
@@ -50,42 +98,42 @@ def load_logo_data_uri() -> str | None:
 LOGO_DATA_URI = load_logo_data_uri()
 
 SAVED_SCHEMA = {
-  "type": "object",
-  "properties": {
-    "inputs": {
-      "type": "object",
-      "properties": {
-        "L": {"type": "number", "minimum": 0.1, "maximum": 1e4},
-        "E_Nmm2": {"type": "number", "minimum": 0.1, "maximum": 1e9},
-        "I_cm4": {"type": "number", "minimum": 0.1, "maximum": 1e12},
-        "perm_shear": {"type": ["number","null"]},
-        "perm_moment": {"type": ["number","null"]},
-        "grade": {"type": "string"},
-        "supports": {"type": "array", "maxItems": 40},
-        "point_loads_kN": {"type":"array", "maxItems": 200},
-        "udls_kNpm": {"type":"array", "maxItems": 200},
-        "springs_kNpm": {"type":"array", "maxItems": 80},
-        "use_conc": {"type":"boolean"},
-        "conc": {"type":["object","null"]},
-        "use_conc_hydro": {"type":"boolean"},
-        "hydro": {
-          "type": ["object","null"],
-          "properties": {
-            "pressure_kNpm2": {"type":"number", "minimum":0},
-            "influence_m": {"type":"number", "minimum":0},
-            "x_start": {"type":"number", "minimum":0},
-            "x_end": {"type":"number", "minimum":0}
-          }
+    "type": "object",
+    "properties": {
+        "inputs": {
+            "type": "object",
+            "properties": {
+                "L": {"type": "number", "minimum": 0.1, "maximum": 1e4},
+                "E_Nmm2": {"type": "number", "minimum": 0.1, "maximum": 1e9},
+                "I_cm4": {"type": "number", "minimum": 0.1, "maximum": 1e12},
+                "perm_shear": {"type": ["number","null"]},
+                "perm_moment": {"type": ["number","null"]},
+                "grade": {"type": "string"},
+                "supports": {"type": "array", "maxItems": 40},
+                "point_loads_kN": {"type":"array", "maxItems": 200},
+                "udls_kNpm": {"type":"array", "maxItems": 200},
+                "springs_kNpm": {"type":"array", "maxItems": 80},
+                "use_conc": {"type":"boolean"},
+                "conc": {"type":["object","null"]},
+                "use_conc_hydro": {"type":"boolean"},
+                "hydro": {
+                    "type": ["object","null"],
+                    "properties": {
+                        "pressure_kNpm2": {"type":"number", "minimum":0},
+                        "influence_m": {"type":"number", "minimum":0},
+                        "x_start": {"type":"number", "minimum":0},
+                        "x_end": {"type":"number", "minimum":0}
+                    }
+                },
+                "SectionName": {"type": ["string","null"]}
+            },
+            "required": ["L","E_Nmm2","I_cm4"]
         },
-        "SectionName": {"type": ["string","null"]}
-      },
-      "required": ["L","E_Nmm2","I_cm4"]
+        "project_details": {"type":["string","null"]},
+        "results": {"type":"object"}
     },
-    "project_details": {"type":["string","null"]},
-    "results": {"type":"object"}
-  },
-  "required": ["inputs"],
-  "additionalProperties": True
+    "required": ["inputs"],
+    "additionalProperties": True
 }
 
 def validate_json_schema(data: dict) -> None:
@@ -100,8 +148,10 @@ def scan_with_clamav_bytes(file_bytes: bytes):
         tmp.write(file_bytes); tmp_path = tmp.name
     try:
         proc = subprocess.run(["clamscan", "--no-summary", tmp_path], capture_output=True, text=True)
-        if proc.returncode == 0: return (True, "Clean")
-        if proc.returncode == 1: return (False, proc.stdout.strip())
+        if proc.returncode == 0:
+            return (True, "Clean")
+        if proc.returncode == 1:
+            return (False, proc.stdout.strip())
         return (None, proc.stderr or proc.stdout)
     finally:
         os.remove(tmp_path)
@@ -113,144 +163,68 @@ st.markdown("""
 .app-top-logo img { height:52px; }
 
 /* 75% Zoom wrapper for Analysis tab (screen only) */
-.zoom-75 {
-  transform: scale(0.5);
-  transform-origin: top center;
-  width: 2%;
-  margin: 0 auto;
-}
+.zoom-75 { transform: scale(0.5); transform-origin: top center; width: 2%; margin: 0 auto; }
 
 /* Screen: hide print-only blocks */
-@media screen {
-  .print-section, .print-graphs, .print-only { display:none !important; }
-}
+@media screen { .print-section, .print-graphs, .print-only { display:none !important; } }
 
 /* Print: general layout & typography */
 @media print {
   @page { size: A4 portrait; margin: 1mm 12mm 12mm 12mm; }
   .block-container { padding-top: 0 !important; }
-  header, footer,
-  section[data-testid="stSidebar"],
-  div[role="tablist"], .stTabs,
-  .stFileUploader, .stDownloadButton,
-  button, .stButton,
-  .print-hide,
-  .on-screen-results,
-  .app-top-logo { display: none !important; }
+  header, footer, section[data-testid="stSidebar"], div[role="tablist"], .stTabs, .stFileUploader, .stDownloadButton, button, .stButton, .print-hide, .on-screen-results, .app-top-logo { display: none !important; }
   [data-testid="stHorizontalBlock"] > div:first-child { display: none !important; }
-  [data-testid="stHorizontalBlock"] > div:last-child {
-    width: 100% !important;
-    max-width: 100% !important;
-    margin: 0 auto !important;
-  }
-  body {
-    font-family: "Segoe UI", Arial, sans-serif;
-    font-size: 12pt;
-    line-height: 1.3;
-    background: white;
-  }
-  .print-section h1 {
-    text-align: center;
-    font-size: 15pt;
-    margin: 2mm 0 4mm 0;
-    text-transform: uppercase;
-    font-weight: 700;
-    letter-spacing: 1px;
-  }
-  .print-section h2 {
-    text-align: center;
-    font-size: 15pt;
-    margin: 6mm 0 3mm 0;
-    text-transform: uppercase;
-    border-bottom: 1px solid #333;
-    padding-bottom: 2mm;
-  }
-  .print-section table {
-    border-collapse: collapse;
-    width: 90%;
-    margin: 0 auto 8mm auto;
-    table-layout: fixed;
-  }
-  .print-section th,
-  .print-section td {
-    border: 1px solid #666;
-    padding: 4px 6px;
-    text-align: center;
-    font-size: 11pt;
-    word-wrap: break-word;
-  }
-  .print-section th {
-    background-color: #f0f0f0;
-    font-weight: 600;
-  }
+  [data-testid="stHorizontalBlock"] > div:last-child { width: 100% !important; max-width: 100% !important; margin: 0 auto !important; }
+  body { font-family: "Segoe UI", Arial, sans-serif; font-size: 12pt; line-height: 1.3; background: white; }
+  .print-section h1 { text-align: center; font-size: 15pt; margin: 2mm 0 4mm 0; text-transform: uppercase; font-weight: 700; letter-spacing: 1px; }
+  .print-section h2 { text-align: center; font-size: 15pt; margin: 6mm 0 3mm 0; text-transform: uppercase; border-bottom: 1px solid #333; padding-bottom: 2mm; }
+  .print-section table { border-collapse: collapse; width: 90%; margin: 0 auto 8mm auto; table-layout: fixed; }
+  .print-section th, .print-section td { border: 1px solid #666; padding: 4px 6px; text-align: center; font-size: 11pt; word-wrap: break-word; }
+  .print-section th { background-color: #f0f0f0; font-weight: 600; }
 }
 
 /* Footer markers */
 @media print {
   @page {
-    @bottom-left {
-      content: "★ Hut Beam Analysis ★";
-      font-size: 11pt;
-      color: #2c3e50;
-      font-weight: 600;
-    }
-    @bottom-right {
-      content: "Sheet " counter(page);
-      font-size: 11pt;
-      color: #2c3e50;
-      font-weight: 600;
-    }
+    @bottom-left  { content: "★ Hut Beam Analysis ★"; font-size: 11pt; color: #2c3e50; font-weight: 600; }
+    @bottom-right { content: "Sheet " counter(page); font-size: 11pt; color: #2c3e50; font-weight: 600; }
   }
 }
 
 /* --- PRINT SETTINGS (UPDATED) --- */
-
 /* Tables section: let it grow freely. No forced break BEFORE or AFTER. */
-.print-section {
-    /* no page-break rules, so if it grows, it will flow naturally to page 2 */
-}
+.print-section { }
 
 /* Graphs section: always start on a fresh page, and never split */
 .print-graphs {
-    page-break-before: always;   /* graphs start on a new page */
-    page-break-inside: avoid;    /* graphs won't be split across pages */
-    text-align: center;
+  page-break-before: always;
+  page-break-inside: avoid;
+  text-align: center;
 }
 
 /* Each graph image/canvas: keep each intact on one page */
-.print-graphs img,
-.print-graphs canvas {
-    page-break-inside: avoid;
-    break-inside: avoid;         /* modern browsers */
-    display: block;
-    margin: 10mm auto;
-    max-width: 95%;
-    height: auto;
+.print-graphs img, .print-graphs canvas {
+  page-break-inside: avoid;
+  break-inside: avoid;
+  display: block;
+  margin: 10mm auto;
+  max-width: 95%;
+  height: auto;
 }
 
 /* keep print-only blocks visible during print */
 .print-only, .print-section, .print-graphs { display: block !important; }
 
 /* existing scale helper (unchanged) */
-.print-scale-75 {
-    transform: scale(0.75);
-    transform-origin: top center;
-    width: 75%;
-    margin: 0 auto;
-}
+.print-scale-75 { transform: scale(0.75); transform-origin: top center; width: 75%; margin: 0 auto; }
 
 html, body { height: auto !important; }
 .block-container { margin-bottom: 0 !important; padding-bottom: 0 !important; }
+
 .custom-footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-top: 2px solid #2c3e50;
-    margin-top: 10mm;
-    padding-top: 4mm;
-    font-size: 11pt;
-    color: #2c3e50;
-    font-weight: 600;
+  display: flex; justify-content: space-between; align-items: center;
+  border-top: 2px solid #2c3e50; margin-top: 10mm; padding-top: 4mm;
+  font-size: 11pt; color: #2c3e50; font-weight: 600;
 }
 .custom-footer .footer-text { flex: 1; text-align: center; }
 </style>
@@ -264,6 +238,7 @@ if LOGO_DATA_URI:
 
 sections_path = APP_DIR / "sections.csv"
 required_cols = ["SectionName","E_Nmm2","I_cm4","PermissibleShear_kN","PermissibleMoment_kNm","Grade"]
+
 if sections_path.exists():
     sections_df = pd.read_csv(sections_path)
     missing = [c for c in required_cols if c not in sections_df.columns]
@@ -338,8 +313,8 @@ with tab1:
     with left_col:
         st.markdown('<div class="print-hide">', unsafe_allow_html=True)
         st.title("Hut Beam Analysis")
-        st.subheader("Member Section (from sections.csv)")
 
+        st.subheader("Member Section (from sections.csv)")
         section_list = sections_df["SectionName"].dropna().tolist() if not sections_df.empty else []
         selected_section_default = saved_inputs.get("SectionName", "--Manual--")
         if selected_section_default not in (["--Manual--"] + section_list):
@@ -352,8 +327,7 @@ with tab1:
         )
 
         if selected_section == "--Manual--":
-            manual_name = st.text_input("Type custom section name",
-                                        value=saved_inputs.get("ManualSectionName",""))
+            manual_name = st.text_input("Type custom section name", value=saved_inputs.get("ManualSectionName",""))
             if manual_name.strip():
                 selected_section = manual_name.strip() + "**"
 
@@ -377,64 +351,65 @@ with tab1:
         st.subheader("Beam Parameters")
         col1, col2, col3 = st.columns([1,1,1])
         with col1:
-            L = st.number_input("Total beam length (m)", min_value=0.1,
-                                value=float(saved_inputs.get("L", 4.0)))
+            L = st.number_input("Total beam length (m)", min_value=0.1, value=float(saved_inputs.get("L", 4.0)))
         with col2:
-            E_Nmm2 = st.number_input("E (N/mm²)", min_value=0.1,
-                                     value=float(saved_inputs.get("E_Nmm2", default_E)))
+            E_Nmm2 = st.number_input("E (N/mm²)", min_value=0.1, value=float(saved_inputs.get("E_Nmm2", default_E)))
         with col3:
-            I_cm4 = st.number_input("I (cm⁴)", min_value=0.1,
-                                    value=float(saved_inputs.get("I_cm4", default_I)))
+            I_cm4 = st.number_input("I (cm⁴)", min_value=0.1, value=float(saved_inputs.get("I_cm4", default_I)))
 
         col4, col5, col6 = st.columns([1,1,1])
         with col4:
-            perm_shear = st.number_input("Permissible Shear (kN)",
-                                         value=float(saved_inputs.get("perm_shear", perm_shear_default)))
+            perm_shear = st.number_input("Permissible Shear (kN)", value=float(saved_inputs.get("perm_shear", perm_shear_default)))
         with col5:
-            perm_moment = st.number_input("Permissible Moment (kNm)",
-                                          value=float(saved_inputs.get("perm_moment", perm_moment_default)))
+            perm_moment = st.number_input("Permissible Moment (kNm)", value=float(saved_inputs.get("perm_moment", perm_moment_default)))
         with col6:
-            grade = st.text_input("Grade",
-                                  value=str(saved_inputs.get("grade", grade_default)))
+            grade = st.text_input("Grade", value=str(saved_inputs.get("grade", grade_default)))
 
         E = E_Nmm2 * 1e6
         I = I_cm4 * 1e-8
 
+        # Supports
         saved_supports = saved_inputs.get("supports", [])
         n_supp = st.number_input("Number of supports", min_value=0, step=1, value=int(len(saved_supports)))
         supports = []
+        supports_display = []
         for i in range(int(n_supp)):
             default_pos = float(saved_supports[i][0]) if i < len(saved_supports) else 0.0
             default_kind = str(saved_supports[i][1]) if i < len(saved_supports) else "pin"
             c1, c2 = st.columns([1,1])
             with c1:
-                pos = st.number_input(f"Support {i+1} position (m)", min_value=0.0, max_value=L,
-                                      value=default_pos, key=f"supp_pos_{i}")
+                pos = st.number_input(f"Support {i+1} position (m)", min_value=0.0, max_value=L, value=default_pos, key=f"supp_pos_{i}")
             with c2:
-                kind = st.selectbox(f"Support {i+1} type",
-                                    ["pin","roller","fixed","hinge"],
-                                    index=["pin","roller","fixed","hinge"].index(
-                                        default_kind if default_kind in ["pin","roller","fixed","hinge"] else "pin"),
-                                    key=f"supp_kind_{i}")
+                kind = st.selectbox(
+                    f"Support {i+1} type",
+                    ["pin","roller","fixed","hinge"],
+                    index=["pin","roller","fixed","hinge"].index(default_kind if default_kind in ["pin","roller","fixed","hinge"] else "pin"),
+                    key=f"supp_kind_{i}"
+                )
             supports.append((pos, kind))
+            supports_display.append({"x": pos, "kind": kind})
 
+        # Point Loads (input in kN; internal in N)
         saved_point_loads = saved_inputs.get("point_loads_kN", [])
         n_pl = st.number_input("Number of point loads", min_value=0, step=1, value=int(len(saved_point_loads)))
         point_loads = []
+        point_display = []
         for i in range(int(n_pl)):
             default_pos = float(saved_point_loads[i][0]) if i < len(saved_point_loads) else 0.0
             default_mag_kN = float(saved_point_loads[i][1]) if i < len(saved_point_loads) else 10.0
             c1, c2 = st.columns([1,1])
             with c1:
-                pos = st.number_input(f"Point load {i+1} position (m)", min_value=0.0, max_value=L,
-                                      value=default_pos, key=f"pl_pos_{i}")
+                pos = st.number_input(f"Point load {i+1} position (m)", min_value=0.0, max_value=L, value=default_pos, key=f"pl_pos_{i}")
             with c2:
-                mag = st.number_input(f"Magnitude kN (+down)", value=default_mag_kN, key=f"pl_mag_{i}")
-            point_loads.append((pos, mag*1e3))
+                mag_kN = st.number_input(f"Magnitude kN (+down)", value=default_mag_kN, key=f"pl_mag_{i}")
+            point_loads.append((pos, mag_kN*1e3))
+            point_display.append({"x": pos, "P": mag_kN})
 
+        # UDLs (input in kN/m; internal in N/m)
         saved_udls = st.session_state["saved_inputs"].get("udls_kNpm", [])
         n_udl = st.number_input("Number of UDL segments", min_value=0, step=1, value=int(len(saved_udls)))
         udls = []
+        udl_display = []
         for i in range(int(n_udl)):
             a_def = float(saved_udls[i][0]) if i < len(saved_udls) else 0.0
             b_def = float(saved_udls[i][1]) if i < len(saved_udls) else 0.0
@@ -450,7 +425,9 @@ with tab1:
             with c4:
                 w2 = st.number_input("End intensity (kN/m)", value=w2_def, key=f"udl_w2_{i}")
             udls.append((a, b, w1*1e3, w2*1e3))
+            udl_display.append({"a": a, "b": b, "w1": w1, "w2": w2})
 
+        # Springs
         saved_springs = saved_inputs.get("springs_kNpm", [])
         n_spring = st.number_input("Number of spring supports", min_value=0, step=1, value=int(len(saved_springs)))
         springs = []
@@ -464,49 +441,59 @@ with tab1:
                 k = st.number_input("Stiffness k (kN/m)", value=k_def, key=f"spring_k_{i}")
             springs.append((pos, k*1e3))
 
+        # Hydrostatic triangular pressure
         saved_use_hydro = bool(saved_inputs.get("use_conc_hydro", False))
         hydro_defaults = saved_inputs.get("hydro", {}) if saved_use_hydro else {}
         use_conc_hydro = st.checkbox("Add Concrete Pressure (hydrostatic triangular)", value=saved_use_hydro)
         if use_conc_hydro:
             colh1, colh2 = st.columns([1,1])
             with colh1:
-                pressure_kNpm2 = st.number_input("Concrete Pressure (kN/m²)", min_value=0.0,
-                                                 value=float(hydro_defaults.get("pressure_kNpm2", 50.0)))
+                pressure_kNpm2 = st.number_input("Concrete Pressure (kN/m²)", min_value=0.0, value=float(hydro_defaults.get("pressure_kNpm2", 50.0)))
             with colh2:
-                influence_m = st.number_input("Influence (m)", min_value=0.0,
-                                              value=float(hydro_defaults.get("influence_m", 0.25)))
+                influence_m = st.number_input("Influence (m)", min_value=0.0, value=float(hydro_defaults.get("influence_m", 0.25)))
             colh3, colh4 = st.columns([1,1])
             with colh3:
-                x_start = st.number_input("Start distance (m)", min_value=0.0, max_value=L,
-                                          value=float(hydro_defaults.get("x_start", 0.0)))
+                x_start = st.number_input("Start distance (m)", min_value=0.0, max_value=L, value=float(hydro_defaults.get("x_start", 0.0)))
             with colh4:
-                x_end = st.number_input("End distance (m)", min_value=0.0, max_value=L,
-                                        value=float(hydro_defaults.get("x_end", L)))
+                x_end = st.number_input("End distance (m)", min_value=0.0, max_value=L, value=float(hydro_defaults.get("x_end", L)))
             Lh = pressure_kNpm2 / 25.0
-            a_eff = max(x_start, x_end - Lh)
-            b_eff = x_end
-            a_clip = max(0.0, min(a_eff, L))
-            b_clip = max(0.0, min(b_eff, L))
+            a_eff = max(x_start, x_end - Lh); b_eff = x_end
+            a_clip = max(0.0, min(a_eff, L)); b_clip = max(0.0, min(b_eff, L))
             L_eff = max(0.0, b_clip - a_clip)
             w_max_kNpm = pressure_kNpm2 * influence_m
             resultant_kN = 0.5 * w_max_kNpm * L_eff
             st.info(f"Lh = {Lh:.3f} m | effective span = {L_eff:.3f} m | max intensity = {w_max_kNpm:.3f} kN/m | Q = {resultant_kN:.3f} kN")
 
+        # Solve button (kept outside any form => live rerun)
         solve_btn = st.button("Solve", type="primary")
         st.markdown('</div>', unsafe_allow_html=True)
 
     with right_col:
+        # ── Right panel tabs: FBD (live), Shear, Moment, Deflection ──
+        tabs = st.tabs(["FBD", "Shear V", "Moment M", "Deflection w"])
+
+        # FBD tab: always live (no Solve required)
+        with tabs[0]:
+            draw_fbd(float(L), supports=supports_display, point_loads=point_display, udls=udl_display)
+
+        # On Solve: run heavy analysis and populate remaining tabs
         if solve_btn:
             beam = BeamModel(L, E, I, perm_shear=perm_shear, perm_moment=perm_moment, grade=grade)
-            for pos, kind in supports: beam.add_support(pos, kind)
-            for pos, mag in point_loads: beam.add_point_load(pos, mag)
-            for a, b, w1, w2 in udls: beam.add_udl(a, b, w1, w2)
-            for pos, k in springs: beam.add_spring_support(pos, k)
+            for pos, kind in supports:
+                beam.add_support(pos, kind)
+            for pos, mag in point_loads:
+                beam.add_point_load(pos, mag)
+            for a, b, w1, w2 in udls:
+                beam.add_udl(a, b, w1, w2)
+            for pos, k in springs:
+                beam.add_spring_support(pos, k)
             if use_conc_hydro:
                 beam.add_concrete_pressure_hydro(
-                    pressure_kNpm2=pressure_kNpm2, influence_m=influence_m, x_start=x_start, x_end=x_end
+                    pressure_kNpm2=pressure_kNpm2,
+                    influence_m=influence_m,
+                    x_start=x_start,
+                    x_end=x_end
                 )
-
             try:
                 # Prefer sparse solver for speed; fallback to dense if needed
                 if hasattr(beam, "solve_sparse"):
@@ -523,7 +510,8 @@ with tab1:
             if res is not None:
                 st.session_state["last_res"] = res
                 st.session_state["last_ctx"] = {
-                    "L": L, "E": E, "I": I, "perm_shear": perm_shear, "perm_moment": perm_moment, "grade": grade,
+                    "L": L, "E": E, "I": I,
+                    "perm_shear": perm_shear, "perm_moment": perm_moment, "grade": grade,
                     "supports": supports, "point_loads": point_loads, "udls": udls, "springs": springs,
                     "use_conc_hydro": bool(use_conc_hydro),
                     "SectionName": selected_section,
@@ -540,13 +528,14 @@ with tab1:
                     st.markdown(
                         f'<div style="text-align:center; margin-bottom:6px;">'
                         f'<img src="{LOGO_DATA_URI}" style="display:block;margin:0 auto 10px auto;width:120px;">'
-                        f'</div>', unsafe_allow_html=True
+                        f'</div>',
+                        unsafe_allow_html=True
                     )
+
                 st.markdown('<h1 style="font-size:15px;text-align:center;">BEAM ANALYSIS REPORT</h1>', unsafe_allow_html=True)
-
                 st.markdown('<h2 style="font-size:15px;">ANALYSIS RESULTS</h2>', unsafe_allow_html=True)
-                st.subheader("Reactions")
 
+                st.subheader("Reactions")
                 if res["reactions_kN"]:
                     reac_df = pd.DataFrame(res["reactions_kN"], columns=["Support at (m)", "Ry (kN)"])
                     if not reac_df.empty:
@@ -555,7 +544,7 @@ with tab1:
                         reac_df["Mx (kN-m)"] = 0.0
                         reac_df.index = np.arange(1, len(reac_df)+1)
                         reac_df["Ry (kN)"] = reac_df["Ry (kN)"].apply(lambda v: f"{v * -1:.2f} kN")
-                    st.table(reac_df)
+                        st.table(reac_df)
                 else:
                     st.write("No supports / reactions.")
 
@@ -566,32 +555,30 @@ with tab1:
                 V_min = float(V.min()) if V.size else 0.0
                 w_max = float(w.max()) if w.size else 0.0
                 w_min = float(w.min()) if w.size else 0.0
-
                 M_gov = max(abs(M_max), abs(M_min))
                 V_gov = max(abs(V_max), abs(V_min))
 
                 force_ext = pd.DataFrame([
-                    ["Bending Moment", f"{M_max:.3f}", f"{M_min:.3f}",
-                     f"{perm_moment:.3f}" if perm_moment is not None else "",
-                     safe_status(M_gov, perm_moment)],
-                    ["Shear", f"{V_max:.3f}", f"{V_min:.3f}",
-                     f"{perm_shear:.3f}" if perm_shear is not None else "",
-                     safe_status(V_gov, perm_shear)],
+                    ["Bending Moment", f"{M_max:.3f}", f"{M_min:.3f}", f"{perm_moment:.3f}" if perm_moment is not None else "", safe_status(M_gov, perm_moment)],
+                    ["Shear", f"{V_max:.3f}", f"{V_min:.3f}", f"{perm_shear:.3f}" if perm_shear is not None else "", safe_status(V_gov, perm_shear)],
                     ["Deformation", f"{w_max:.3f}", f"{w_min:.3f}", "", ""]
                 ], columns=["Result", "Max", "Min", "Permissible", "Status"])
                 force_ext.index = np.arange(1, len(force_ext)+1)
                 st.markdown("**Force Extremes**", unsafe_allow_html=True)
                 st.table(force_ext)
 
-                st.pyplot(beam.plot_FBD(res))
-                st.pyplot(beam.plot_SFD(res))
-                st.pyplot(beam.plot_BMD(res))
+                # Plots into tabs
+                with tabs[1]:
+                    st.pyplot(beam.plot_SFD(res))
+                with tabs[2]:
+                    st.pyplot(beam.plot_BMD(res))
+                with tabs[3]:
+                    fig = beam.plot_deflection(res)
+                    ax = fig.gca()
+                    ax.invert_yaxis()
+                    st.pyplot(fig)
 
-                fig = beam.plot_deflection(res)
-                ax = fig.gca()
-                ax.invert_yaxis()
-                st.pyplot(fig)
-
+                # Save payload
                 save_inputs = {
                     "L": L, "E_Nmm2": E_Nmm2, "I_cm4": I_cm4,
                     "perm_shear": perm_shear, "perm_moment": perm_moment, "grade": grade,
@@ -615,69 +602,78 @@ with tab1:
                     "results": {
                         "x_nodes": res["x_nodes"].tolist(),
                         "deflection_mm": res["deflection_mm"].tolist(),
-                        "x": x.tolist(), "M_kNm": M.tolist(), "V_kN": V.tolist(), "w_mm": w.tolist(),
+                        "x": x.tolist(),
+                        "M_kNm": M.tolist(),
+                        "V_kN": V.tolist(),
+                        "w_mm": w.tolist(),
                         "reactions_kN": res["reactions_kN"],
                     }
                 }
 
                 st.markdown('<div class="print-hide">', unsafe_allow_html=True)
-                st.download_button("💾 Save Calculation",
+                st.download_button(
+                    "💾 Save Calculation",
                     data=json.dumps(save_payload, indent=2),
                     file_name="beam_calculation.json",
                     mime="application/json",
                     use_container_width=True
                 )
                 st.markdown("""
-                    <div style="margin-top: 12px; margin-bottom: 4px; text-align:center;">
-                        <button onclick="window.top.print()" style="font-size:16px; padding:6px 12px;">
-                            🖨️ Print Full Report
-                        </button>
-                    </div>
-                    """, unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)
+                <div style="margin-top: 12px; margin-bottom: 4px; text-align:center;">
+                  <button onclick="window.top.print()" style="font-size:16px; padding:6px 12px;">
+                    🖨️ Print Full Report
+                  </button>
+                </div>
+                """, unsafe_allow_html=True)
                 st.markdown('</div>', unsafe_allow_html=True)
 
+        st.markdown('</div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
 # -------------------- Contact Us TAB --------------------
 with tab4:
     st.markdown("""
-    <hr>
-    ### About This Software
-    This project is <b>open source</b> and provided <b>free of charge</b> to help make your work easier and support educational goals.
-    <ul>
-      <li><b>Free &amp; Open Source:</b> You are welcome to use, modify, and share this software in accordance with the applicable open-source license.</li>
-      <li><b>Community Sharing:</b> Feel free to share it with others who might benefit.</li>
-      <li><b>User Responsibility:</b> All analyses and results generated using this software are performed at your own discretion, and <b>you are solely responsible</b> for any outcomes or decisions based on its use.</li>
-    </ul>
-    <hr>
-    <p><b>Developer Contact:</b> <a href="mailto:kaiumattar@gmail.com">kaiumattar@gmail.com</a></p>
-    <hr>
-    """, unsafe_allow_html=True)
+<hr>
+### About This Software
+This project is <b>open source</b> and provided <b>free of charge</b> to help make your work easier and support educational goals.
+<ul>
+<li><b>Free &amp; Open Source:</b> You are welcome to use, modify, and share this software in accordance with the applicable open-source license.</li>
+<li><b>Community Sharing:</b> Feel free to share it with others who might benefit.</li>
+<li><b>User Responsibility:</b> All analyses and results generated using this software are performed at your own discretion, and <b>you are solely responsible</b> for any outcomes or decisions based on its use.</li>
+</ul>
+<hr>
+<p><b>Developer Contact:</b> <a href="mailto:kaiumattar@gmail.com">kaiumattar@gmail.com</a></p>
+<hr>
+""", unsafe_allow_html=True)
 
 def render_print_only():
     res = st.session_state.get("last_res")
     ctx = st.session_state.get("last_ctx")
     if not res or not ctx:
         return
-    beam_p = BeamModel(ctx["L"], ctx["E"], ctx["I"],
-                       perm_shear=ctx["perm_shear"], perm_moment=ctx["perm_moment"], grade=ctx["grade"])
-    for pos, kind in ctx["supports"]: beam_p.add_support(pos, kind)
-    for pos, mag in ctx["point_loads"]: beam_p.add_point_load(pos, mag)
-    for a,b,w1,w2 in ctx["udls"]: beam_p.add_udl(a,b,w1,w2)
-    for pos,k in ctx["springs"]: beam_p.add_spring_support(pos,k)
+
+    beam_p = BeamModel(ctx["L"], ctx["E"], ctx["I"], perm_shear=ctx["perm_shear"], perm_moment=ctx["perm_moment"], grade=ctx["grade"])
+    for pos, kind in ctx["supports"]:
+        beam_p.add_support(pos, kind)
+    for pos, mag in ctx["point_loads"]:
+        beam_p.add_point_load(pos, mag)
+    for a,b,w1,w2 in ctx["udls"]:
+        beam_p.add_udl(a,b,w1,w2)
+    for pos,k in ctx["springs"]:
+        beam_p.add_spring_support(pos,k)
     if ctx.get("use_conc_hydro") and "hydro" in ctx:
         h = ctx["hydro"]
         beam_p.add_concrete_pressure_hydro(h["pressure_kNpm2"], h["influence_m"], h["x_start"], h["x_end"])
 
     st.markdown('<div class="print-section print-only print-scale-75">', unsafe_allow_html=True)
-
     if LOGO_DATA_URI:
         st.markdown(
             f'<div style="text-align:center; margin:0 0 4mm 0;">'
             f'<img src="{LOGO_DATA_URI}" style="display:block;margin:0 auto;width:120px;">'
-            f'</div>', unsafe_allow_html=True
+            f'</div>',
+            unsafe_allow_html=True
         )
+
     det_html = details_html_from_state()
     if det_html:
         st.markdown(det_html, unsafe_allow_html=True)
@@ -685,7 +681,6 @@ def render_print_only():
     st.markdown('<h1 style="font-size:15px;">BEAM ANALYSIS REPORT</h1>', unsafe_allow_html=True)
 
     section_name = ctx.get("SectionName", "--Manual--")
-
     input_summary = pd.DataFrame([
         [f"{section_name} Length", f"{ctx['L']} m"],
         ["Moment of Inertia (I)", f"{(ctx['I']*1e8):.0f} cm⁴"],
@@ -693,6 +688,7 @@ def render_print_only():
         ["Grade", ctx["grade"]]
     ], columns=["General Info", "Value"])
     input_summary.index = np.arange(1, len(input_summary)+1)
+
     st.markdown('<h2 style="font-size:15px;">INPUT SUMMARY</h2>', unsafe_allow_html=True)
     st.table(input_summary)
 
@@ -703,6 +699,7 @@ def render_print_only():
         reac_df["Mx (kN-m)"] = 0.0
         reac_df.index = np.arange(1, len(reac_df)+1)
         reac_df["Ry (kN)"] = reac_df["Ry (kN)"].apply(lambda v: f"{v * -1:.2f} kN")
+
     st.markdown('<h2 style="font-size:15px;">ANALYSIS RESULTS</h2>', unsafe_allow_html=True)
     st.markdown("**Reactions**", unsafe_allow_html=True)
     st.table(reac_df)
@@ -714,34 +711,28 @@ def render_print_only():
     V_min = float(V.min()) if len(V) else 0.0
     w_max = float(w.max()) if len(w) else 0.0
     w_min = float(w.min()) if len(w) else 0.0
-
     M_gov = max(abs(M_max), abs(M_min))
     V_gov = max(abs(V_max), abs(V_min))
 
     force_ext = pd.DataFrame([
-        ["Bending Moment", f"{M_max:.3f}", f"{M_min:.3f}",
-         f"{ctx['perm_moment']:.3f}" if ctx["perm_moment"] is not None else "",
-         safe_status(M_gov, ctx["perm_moment"])],
-        ["Shear", f"{V_max:.3f}", f"{V_min:.3f}",
-         f"{ctx['perm_shear']:.3f}" if ctx["perm_shear"] is not None else "",
-         safe_status(V_gov, ctx["perm_shear"])],
+        ["Bending Moment", f"{M_max:.3f}", f"{M_min:.3f}", f"{ctx['perm_moment']:.3f}" if ctx["perm_moment"] is not None else "", safe_status(M_gov, ctx["perm_moment"])],
+        ["Shear", f"{V_max:.3f}", f"{V_min:.3f}", f"{ctx['perm_shear']:.3f}" if ctx["perm_shear"] is not None else "", safe_status(V_gov, ctx["perm_shear"])],
         ["Deformation", f"{w_max:.3f}", f"{w_min:.3f}", "", ""]
     ], columns=["Result", "Max", "Min", "Permissible", "Status"])
     force_ext.index = np.arange(1, len(force_ext)+1)
+
     st.markdown("**Force Extremes**", unsafe_allow_html=True)
     st.table(force_ext)
-
     st.markdown('</div>', unsafe_allow_html=True)
+
     st.markdown('<div class="print-graphs print-only">', unsafe_allow_html=True)
     st.pyplot(beam_p.plot_FBD(res))
     st.pyplot(beam_p.plot_SFD(res))
     st.pyplot(beam_p.plot_BMD(res))
-
     fig = beam_p.plot_deflection(res)
     ax = fig.gca()
     ax.invert_yaxis()
     st.pyplot(fig)
-
     st.markdown('</div>', unsafe_allow_html=True)
 
 render_print_only()
